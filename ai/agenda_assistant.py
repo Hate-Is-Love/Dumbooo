@@ -778,9 +778,11 @@ class AgendaAssistant(ConversationHooks):
             lines.append(f"**Due {label}:** " + ", ".join(t.title for t in day_tasks))
             spoken.append(f"due {label}: " + ", ".join(t.title for t in day_tasks))
         if overdue:
+            lines.append("")   # a blank line ends the list above, so this is its own paragraph
             lines.append(f"**Overdue:** " + ", ".join(t.title for t in overdue[:6]))
             spoken.append(f"overdue: " + ", ".join(t.title for t in overdue[:3]))
         if undated:
+            lines.append("")
             lines.append(f"**Other tasks (no date):** " + ", ".join(t.title for t in undated[:6]) +
                          (f" +{len(undated) - 6} more" if len(undated) > 6 else ""))
         if not lines:

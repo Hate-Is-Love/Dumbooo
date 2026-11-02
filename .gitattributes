@@ -1,0 +1,6 @@
+# Normalise line endings in the repository; Windows checkouts get CRLF automatically.
+* text=auto
+*.png binary
+*.jpg binary
+*.pdf binary
+*.onnx binary

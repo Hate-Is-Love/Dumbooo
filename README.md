@@ -1,31 +1,171 @@
-# DUMBOO — personal AI desktop assistant (Modules 1–5)
+<div align="center">
 
-DUMBOO sits quietly in your system tray, listening only for **“Hey DUMBOO”**.
-When it hears the phrase, a sci-fi dashboard appears with an animated core that
-reacts to your voice. It then records your command, transcribes it locally
-and answers out loud. If you talk over it, it stops speaking. It also keeps
-your **tasks**, **schedule and reminders**, and shows **live system metrics**.
+# DUMBOO
 
-Wake word, voice detection, speech recognition and the voice all run **locally
-on your laptop**. No cloud audio is ever sent.
+### Your personal AI desktop assistant — talk to it, and it gets things done.
 
-**Module 2** adds the AI conversation: **Google Gemini** (default, free tier
-works) or **OpenAI**. Only the *text* of your message (and the recent
-conversation) is sent to the provider you choose. See
-[section 14: AI conversation (Module 2)](#14-ai-conversation-module-2).
+<p>
+<img alt="Python 3.11" src="https://img.shields.io/badge/python-3.11-3776AB?logo=python&logoColor=white">
+<img alt="Windows 10/11" src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6?logo=windows&logoColor=white">
+<img alt="PySide6" src="https://img.shields.io/badge/UI-PySide6%20(Qt%206)-41CD52?logo=qt&logoColor=white">
+<img alt="Tests: 778 passing" src="https://img.shields.io/badge/tests-778%20passing-2ea44f?logo=pytest&logoColor=white">
+<img alt="Voice runs locally" src="https://img.shields.io/badge/voice-100%25%20local-0f8b9b">
+<img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-yellow">
+</p>
 
-**Module 3** adds secure accounts (an owner plus other users), automatic conversation
-history and long-term memory per user. **First start: you will be asked to create the
-owner account.** See [section 15](#15-accounts-history-and-long-term-memory-module-3).
+**Say “Hey DUMBOO”** — it listens, understands, answers out loud and acts: tasks, reminders, schedule, web research,
+news, laptop automation and security checks, in a sci-fi dashboard with a 3D voice blob that reacts as you talk.
 
-**Module 4** adds laptop automation (apps, files, typing, screen reading, the web, dev tasks),
-always behind permissions and confirmations. See [section 16](#16-laptop-automation-module-4).
+<img src="docs/images/assistant.png" alt="DUMBOO dashboard: the animated core and voice blob, live telemetry, today's agenda and the conversation" width="100%">
 
-**Module 5** adds live web search, latest news, deep research with cited sources and
-fact-checking. It works **without any extra key**. See
-[section 17](#17-web-search-research-and-live-news-module-5).
+[Features](#-features) · [How it works](#-how-it-works) · [Tech stack](#-tech-stack) · [Quick start](#-quick-start) ·
+[Try saying](#-try-saying) · [Documentation](#-documentation) · [Full guide](#full-guide)
+
+</div>
 
 ---
+
+## ✨ Features
+
+| | Feature | What it does |
+|---|---|---|
+| 🎙️ | **Hands-free voice** | Always-on “Hey DUMBOO” wake word, speech detection, local Whisper speech recognition (Indian, British and American accents), natural Piper voice. Talk over it to interrupt. |
+| 🧠 | **Natural conversation** | Groq, Google Gemini or OpenAI with **automatic switching** between providers and keys when one fails; short answers first, details on request. |
+| ✅ | **Tasks, schedule & reminders** | “Add a task to submit the report by Friday 5 pm”, “schedule a call tomorrow at 3”, “what’s on my plate today?” — saved in the right place and spoken when due. Understands slang and Hinglish. |
+| 🌐 | **Web research & news** | Live search with numbered citations, latest news with dates, deep research reports and fact-checking — every citation is checked against what was actually retrieved. |
+| 💻 | **Laptop automation** | Open apps, manage files, type, read the screen, check performance, run project tests — 66 named actions with risk levels, confirmations and verified results. |
+| 🛡️ | **Security guardian** | Defender/firewall/update overview, startup-entry investigation (signature, SHA-256, publisher), suspicious-link checks, file integrity monitoring — read-only by default. |
+| 🔐 | **Accounts & privacy** | Owner and users, Argon2id passwords, **face unlock** with a liveness check, private history and long-term memory per user. Audio never leaves the PC. |
+| 🫧 | **Living interface** | Animated core that shows every state, and a 3D point-cloud blob that reacts to your voice and to DUMBOO’s own speech. |
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/tasks.png" alt="TASKS page with due dates, times and reminders"><p align="center"><sub><b>Tasks</b> — added by voice, with due times and reminders</sub></p></td>
+<td width="50%"><img src="docs/images/security-link-check.png" alt="SECURITY page flagging a lookalike phishing link"><p align="center"><sub><b>Security</b> — a lookalike phishing link flagged as high concern</sub></p></td>
+</tr>
+<tr>
+<td colspan="2"><img src="docs/images/voice-blob.png" alt="The voice blob at rest, while the user talks and while DUMBOO speaks"><p align="center"><sub><b>Voice blob</b> — calm, reacting to your voice, and reacting to DUMBOO's voice</sub></p></td>
+</tr>
+</table>
+
+## ⚙️ How it works
+
+<img src="docs/images/voice-flow.png" alt="A voice request: wake, listen, transcribe, understand, act, answer" width="100%">
+
+1. **Wake & listen** — a small local model waits for “Hey DUMBOO”; Silero VAD finds where your sentence ends.
+2. **Transcribe** — Whisper turns speech into text on your laptop.
+3. **Understand** — the text passes a chain of specialists:
+   **Security → Tasks/Schedule → Everyday → Research → Automation → Memory → AI**.
+   The first one that recognises the request handles it locally (fast and free); everything else goes to the AI.
+4. **Act & answer** — the result streams onto the screen and is spoken; an **event bus** and a **state machine**
+   keep every part in sync.
+
+<details>
+<summary><b>Architecture diagram</b></summary>
+<br>
+<img src="docs/images/architecture.png" alt="Layered architecture: dashboard, application core, voice, conversation, skills, services, storage" width="100%">
+
+More in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and the illustrated [project guide (PDF)](docs/DUMBOO_Guide.pdf).
+</details>
+
+## 🧰 Tech stack
+
+| Area | Technology |
+|---|---|
+| Language | Python 3.11 |
+| Interface | PySide6 (Qt 6), custom-painted animations, NumPy 3D blob |
+| Voice | sounddevice (PortAudio) · Silero VAD (onnxruntime) · openWakeWord / Whisper spotter · faster-whisper · Piper TTS |
+| AI | Groq · Google Gemini (google-genai) · OpenAI — with automatic fallback |
+| Research | httpx · trafilatura · Tavily, Brave, Google News RSS, GDELT · Playwright |
+| Automation | uiautomation (Windows UI Automation) · mss · psutil · pypdf |
+| Security | argon2-cffi · Windows DPAPI · OpenCV (YuNet + SFace) face unlock · PowerShell/registry checks |
+| Storage | SQLite (WAL, FTS5) with versioned migrations and automatic backups |
+| Testing | pytest — 778 tests with fakes for microphone, speaker, camera, AI, web and system |
+
+## 🚀 Quick start
+
+> Requires **Windows 10/11** and **Python 3.11**. Voice features need a microphone and speakers.
+
+```powershell
+git clone https://github.com/Hate-Is-Love/Dumbooo.git
+cd Dumbooo
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python scripts/download_models.py      # local voice models, one time (~600 MB)
+copy .env.example .env                 # then add a free Groq or Gemini API key
+python main.py --show
+```
+
+On first start DUMBOO asks you to create the owner account. Run `python main.py --diagnose` to check the
+microphone, models and keys, and `python -m pytest` to run the test suite. Full setup:
+[Install](#2-install-windows) · [Run](#3-run) · [AI keys](#142-set-up-gemini-default-free-tier).
+
+## 🗣️ Try saying
+
+| | |
+|---|---|
+| **Tasks & reminders** | “Add a task to submit the report by Friday at 5 pm” · “Remind me in 10 minutes to stretch” · “What’s on my plate today?” |
+| **Schedule** | “Schedule a meeting with Rahul tomorrow at 3” · “Am I free at 4?” · “Move the meeting to 5 pm” |
+| **Questions** | “Explain classification vs regression” · “Elaborate it for 10 marks” · “Translate good morning to Hindi” |
+| **Web & news** | “Latest news about AI” · “Research the best laptops for students” · “Fact check: Python is faster than C” |
+| **Laptop** | “Open Chrome” · “Take a screenshot” · “Why is my laptop slow?” · “Find PDFs in my Downloads” |
+| **Security** | “Check my computer’s security” · “Show my startup programs” · “Is this link safe: …” |
+| **Slang** | “Yo ping me tmrw at 5 to hit the gym” · “Knocked out the report” · “Aaj kya karna hai” |
+
+## 📚 Documentation
+
+- **[Project guide (PDF)](docs/DUMBOO_Guide.pdf)** — what DUMBOO is, features, architecture, stack and key code, explained.
+- **[Architecture](docs/ARCHITECTURE.md)** — layers, threads, data flow and every module.
+- **[Test report](docs/TEST_REPORT.md)** — what is tested automatically, what was verified live, and what wasn't.
+- **[Wake word training](docs/WAKE_WORD_TRAINING.md)** — train a custom “Hey DUMBOO” model.
+- **[Contributing](CONTRIBUTING.md)** · **[Security policy](SECURITY.md)**
+
+## 🔒 Privacy
+
+Wake word, speech detection, speech recognition and the voice all run **on your laptop** — no audio is sent
+anywhere. Only the text of a message (and recent context) goes to the AI provider you choose. API keys stay in
+your local `.env`; passwords are Argon2id hashes; face data and “remember me” tokens are encrypted with Windows
+DPAPI. Risky actions always ask first. Details: [Privacy and safety](#10-privacy-and-safety).
+
+## 📄 License
+
+[MIT](LICENSE) © 2026 Roshan Mahesh Bhise ([@Hate-Is-Love](https://github.com/Hate-Is-Love))
+
+---
+
+<a id="full-guide"></a>
+
+# Full guide
+
+DUMBOO sits quietly in your system tray, listening only for **“Hey DUMBOO”**. When it hears the phrase, the
+dashboard appears, records your command, transcribes it locally and answers out loud. If you talk over it, it
+stops speaking. The sections below cover installation, every feature, settings, troubleshooting and limits.
+
+**Contents**
+
+1. [Requirements](#1-requirements)
+2. [Install (Windows)](#2-install-windows)
+3. [Run](#3-run)
+4. [Exit safely](#4-exit-safely)
+5. [Choose microphone and speaker](#5-choose-microphone-and-speaker)
+6. [Run the automated tests](#6-run-the-automated-tests)
+7. [Settings explained](#7-settings-explained)
+8. [Manual hardware checks (do these once on your laptop)](#8-manual-hardware-checks-do-these-once-on-your-laptop)
+9. [Troubleshooting](#9-troubleshooting)
+10. [Privacy and safety](#10-privacy-and-safety)
+11. [How the noise and interruption handling works, and its limits](#11-how-the-noise-and-interruption-handling-works-and-its-limits)
+12. [Project layout](#12-project-layout)
+13. [Linux / macOS notes](#13-linux--macos-notes)
+14. [AI conversation (Module 2)](#14-ai-conversation-module-2)
+15. [Accounts, history and long-term memory (Module 3)](#15-accounts-history-and-long-term-memory-module-3)
+16. [Laptop automation (Module 4)](#16-laptop-automation-module-4)
+17. [Web search, research and live news (Module 5)](#17-web-search-research-and-live-news-module-5)
+18. [Everyday voice features, learning and the 3D voice blob](#18-everyday-voice-features-learning-and-the-3d-voice-blob)
+19. [Face unlock and the welcome greeting](#19-face-unlock-and-the-welcome-greeting)
+20. [Security & privacy guardian (Module 7)](#20-security--privacy-guardian-module-7)
+21. [Tasks, schedule and reminders by voice and text](#21-tasks-schedule-and-reminders-by-voice-and-text)
+
 
 ## 1. Requirements
 
