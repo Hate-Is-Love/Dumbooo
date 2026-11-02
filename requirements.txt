@@ -1,0 +1,20 @@
+# DUMBOO Phase 1 runtime dependencies (Python 3.11.x, Windows 10/11 first)
+PySide6>=6.8,<6.11          # desktop UI, system tray, animation
+numpy>=1.26,<2.4            # audio buffers and DSP
+sounddevice>=0.5,<0.6       # microphone capture and speaker playback (PortAudio)
+onnxruntime>=1.20,<2        # Silero VAD and openWakeWord inference
+faster-whisper>=1.1,<1.3    # speech-to-text (also bundles the Silero VAD v6 model)
+openwakeword==0.6.0         # custom "Hey DUMBOO" wake-word models (optional custom model)
+piper-tts>=1.3,<1.7         # local neural text-to-speech
+psutil>=6,<8                # CPU / RAM / battery metrics
+google-genai>=2.30,<3       # Module 2: Google Gemini (official Gen AI SDK)
+openai>=3.30,<4             # Module 2: OpenAI (official SDK, Responses API)
+argon2-cffi>=23.1,<26       # Module 3: Argon2id password hashing
+uiautomation>=2.0.20,<3     # Module 4: read/click on-screen controls (Windows UI Automation)
+mss>=9,<11                  # Module 4: screenshots (only when needed and permitted)
+playwright>=1.48,<2         # Module 4: DUMBOO's own browser window (uses the installed Edge/Chrome)
+pypdf>=5,<7                 # Module 4: read and summarise PDFs
+trafilatura>=2.0,<3         # Module 5: main-text extraction from web pages
+httpx>=0.27,<1               # Module 5: web requests (search providers, page reading)
+opencv-python-headless>=4.9,<5  # face unlock (YuNet + SFace); headless: no Qt clash with PySide6
+pytest>=8,<9                # automated tests

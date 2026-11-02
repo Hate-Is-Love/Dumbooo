@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Runtime data (database, user settings), logs and downloaded models
+data/
+logs/
+models/
+*.part
+
+# Secrets
+.env
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# Automation library log (written next to main.py at runtime)
+@AutomationLog.txt
+*.log

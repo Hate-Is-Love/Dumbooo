@@ -1,0 +1,301 @@
+{
+  "applications": {
+    "chrome": {
+      "name": "Google Chrome",
+      "aliases": [
+        "chrome",
+        "google chrome"
+      ],
+      "paths": [
+        "%ProgramFiles%\\Google\\Chrome\\Application\\chrome.exe",
+        "%ProgramFiles(x86)%\\Google\\Chrome\\Application\\chrome.exe",
+        "%LOCALAPPDATA%\\Google\\Chrome\\Application\\chrome.exe"
+      ],
+      "process": "chrome.exe",
+      "kind": "browser",
+      "opens": [
+        "url",
+        "file"
+      ]
+    },
+    "edge": {
+      "name": "Microsoft Edge",
+      "aliases": [
+        "edge",
+        "microsoft edge"
+      ],
+      "paths": [
+        "%ProgramFiles(x86)%\\Microsoft\\Edge\\Application\\msedge.exe",
+        "%ProgramFiles%\\Microsoft\\Edge\\Application\\msedge.exe"
+      ],
+      "process": "msedge.exe",
+      "kind": "browser",
+      "opens": [
+        "url",
+        "file"
+      ]
+    },
+    "firefox": {
+      "name": "Mozilla Firefox",
+      "aliases": [
+        "firefox",
+        "mozilla firefox"
+      ],
+      "paths": [
+        "%ProgramFiles%\\Mozilla Firefox\\firefox.exe",
+        "%ProgramFiles(x86)%\\Mozilla Firefox\\firefox.exe"
+      ],
+      "process": "firefox.exe",
+      "kind": "browser",
+      "opens": [
+        "url",
+        "file"
+      ]
+    },
+    "vscode": {
+      "name": "Visual Studio Code",
+      "aliases": [
+        "vs code",
+        "vscode",
+        "visual studio code",
+        "code editor"
+      ],
+      "paths": [
+        "%LOCALAPPDATA%\\Programs\\Microsoft VS Code\\Code.exe",
+        "%ProgramFiles%\\Microsoft VS Code\\Code.exe"
+      ],
+      "process": "Code.exe",
+      "kind": "editor",
+      "opens": [
+        "folder",
+        "file"
+      ]
+    },
+    "antigravity": {
+      "name": "Antigravity IDE",
+      "aliases": [
+        "antigravity",
+        "antigravity ide"
+      ],
+      "paths": [
+        "%LOCALAPPDATA%\\Programs\\Antigravity IDE\\Antigravity IDE.exe",
+        "%LOCALAPPDATA%\\Programs\\Antigravity\\Antigravity.exe"
+      ],
+      "process": "Antigravity IDE.exe",
+      "kind": "editor",
+      "opens": [
+        "folder",
+        "file"
+      ]
+    },
+    "notepad": {
+      "name": "Notepad",
+      "aliases": [
+        "notepad",
+        "note pad",
+        "text editor"
+      ],
+      "paths": [
+        "%WINDIR%\\System32\\notepad.exe"
+      ],
+      "process": "Notepad.exe",
+      "kind": "editor",
+      "opens": [
+        "file"
+      ]
+    },
+    "explorer": {
+      "name": "File Explorer",
+      "aliases": [
+        "file explorer",
+        "explorer",
+        "files",
+        "my files"
+      ],
+      "paths": [
+        "%WINDIR%\\explorer.exe"
+      ],
+      "process": "explorer.exe",
+      "kind": "files",
+      "opens": [
+        "folder"
+      ]
+    },
+    "calculator": {
+      "name": "Calculator",
+      "aliases": [
+        "calculator",
+        "calc"
+      ],
+      "paths": [
+        "%WINDIR%\\System32\\calc.exe"
+      ],
+      "process": "CalculatorApp.exe",
+      "kind": "utility",
+      "opens": []
+    },
+    "paint": {
+      "name": "Paint",
+      "aliases": [
+        "paint",
+        "ms paint"
+      ],
+      "paths": [
+        "%WINDIR%\\System32\\mspaint.exe"
+      ],
+      "process": "mspaint.exe",
+      "kind": "utility",
+      "opens": [
+        "file"
+      ]
+    },
+    "word": {
+      "name": "Microsoft Word",
+      "aliases": [
+        "word",
+        "microsoft word",
+        "ms word"
+      ],
+      "paths": [
+        "%ProgramFiles%\\Microsoft Office\\root\\Office16\\WINWORD.EXE",
+        "%ProgramFiles(x86)%\\Microsoft Office\\root\\Office16\\WINWORD.EXE"
+      ],
+      "process": "WINWORD.EXE",
+      "kind": "office",
+      "opens": [
+        "file"
+      ]
+    },
+    "excel": {
+      "name": "Microsoft Excel",
+      "aliases": [
+        "excel",
+        "microsoft excel",
+        "ms excel"
+      ],
+      "paths": [
+        "%ProgramFiles%\\Microsoft Office\\root\\Office16\\EXCEL.EXE",
+        "%ProgramFiles(x86)%\\Microsoft Office\\root\\Office16\\EXCEL.EXE"
+      ],
+      "process": "EXCEL.EXE",
+      "kind": "office",
+      "opens": [
+        "file"
+      ]
+    },
+    "powerpoint": {
+      "name": "Microsoft PowerPoint",
+      "aliases": [
+        "powerpoint",
+        "power point",
+        "microsoft powerpoint"
+      ],
+      "paths": [
+        "%ProgramFiles%\\Microsoft Office\\root\\Office16\\POWERPNT.EXE",
+        "%ProgramFiles(x86)%\\Microsoft Office\\root\\Office16\\POWERPNT.EXE"
+      ],
+      "process": "POWERPNT.EXE",
+      "kind": "office",
+      "opens": [
+        "file"
+      ]
+    }
+  },
+  "permitted_directories": [
+    {
+      "path": "{desktop}",
+      "write": true
+    },
+    {
+      "path": "{documents}",
+      "write": true
+    },
+    {
+      "path": "{downloads}",
+      "write": true
+    },
+    {
+      "path": "{pictures}",
+      "write": true
+    },
+    {
+      "path": "{music}",
+      "write": true
+    },
+    {
+      "path": "{videos}",
+      "write": true
+    },
+    {
+      "path": "{app_root}",
+      "write": false
+    }
+  ],
+  "websites": {
+    "youtube": "https://www.youtube.com",
+    "google": "https://www.google.com",
+    "gmail": "https://mail.google.com",
+    "github": "https://github.com",
+    "stack overflow": "https://stackoverflow.com",
+    "wikipedia": "https://www.wikipedia.org",
+    "python documentation": "https://docs.python.org/3/",
+    "python docs": "https://docs.python.org/3/",
+    "pypi": "https://pypi.org",
+    "chatgpt": "https://chatgpt.com",
+    "linkedin": "https://www.linkedin.com",
+    "whatsapp": "https://web.whatsapp.com",
+    "google maps": "https://maps.google.com",
+    "google drive": "https://drive.google.com",
+    "outlook": "https://outlook.live.com",
+    "amazon": "https://www.amazon.in",
+    "netflix": "https://www.netflix.com",
+    "spotify": "https://open.spotify.com",
+    "instagram": "https://www.instagram.com",
+    "facebook": "https://www.facebook.com",
+    "x": "https://x.com",
+    "reddit": "https://www.reddit.com",
+    "flipkart": "https://www.flipkart.com",
+    "youtube music": "https://music.youtube.com",
+    "google meet": "https://meet.google.com",
+    "google translate": "https://translate.google.com",
+    "hotstar": "https://www.hotstar.com",
+    "prime video": "https://www.primevideo.com"
+  },
+  "limits": {
+    "reply_wait_s": 8,
+    "confirmation_timeout_s": 300,
+    "max_steps": 15,
+    "max_bulk_files": 500,
+    "search_max_results": 40,
+    "search_timeout_s": 20,
+    "search_max_depth": 8,
+    "content_search_max_kb": 2048,
+    "read_max_kb": 1024,
+    "type_max_chars": 5000,
+    "command_timeout_s": 900,
+    "step_timeout_s": 120
+  },
+  "risk_overrides": {},
+  "auto_approve_medium": [],
+  "browser": {
+    "channel": "msedge",
+    "headless": false,
+    "download_dir": "{downloads}\\DUMBOO",
+    "search_engine": "https://www.bing.com/search?q={query}",
+    "blocked_domains": [],
+    "allow_executable_downloads": false,
+    "navigation_timeout_s": 25
+  },
+  "monitor": {
+    "alerts_enabled": true,
+    "interval_s": 10,
+    "sustain_s": 60,
+    "cpu_alert_percent": 90,
+    "ram_alert_percent": 90,
+    "disk_alert_free_percent": 10,
+    "battery_alert_percent": 15
+  },
+  "screen": {
+    "ai_vision": "ask"
+  }
+}

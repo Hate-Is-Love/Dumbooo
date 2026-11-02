@@ -1,0 +1,112 @@
+{
+  "audio": {
+    "input_device": null,
+    "output_device": null,
+    "noise_suppression": true,
+    "noise_suppression_strength": 0.6
+  },
+  "wake_word": {
+    "enabled": true,
+    "phrase": "hey dumboo",
+    "engine": "auto",
+    "model_path": "models/wakeword/hey_dumboo.onnx",
+    "spotter_model": "base.en",
+    "sensitivity": 0.5,
+    "cooldown_s": 2.0
+  },
+  "vad": {
+    "threshold": 0.5,
+    "end_silence_ms": 900,
+    "pre_roll_ms": 400,
+    "min_speech_ms": 300,
+    "max_record_s": 15,
+    "listen_timeout_s": 8
+  },
+  "stt": {
+    "enabled": true,
+    "model": "small.en",
+    "language": "en",
+    "device": "cpu",
+    "compute_type": "int8"
+  },
+  "tts": {
+    "enabled": true,
+    "voice_model": "models/piper/en_US-lessac-medium.onnx",
+    "speed": 1.0
+  },
+  "interruption": {
+    "enabled": true,
+    "threshold": 0.7,
+    "min_speech_ms": 300,
+    "echo_margin_db": 6.0
+  },
+  "dashboard": {
+    "start_mode": "sleep",
+    "auto_sleep": true,
+    "sleep_timeout_s": 60,
+    "animation_intensity": 0.8,
+    "text_only": false,
+    "blob_enabled": true,
+    "blob_sensitivity": 1.0
+  },
+  "accounts": {
+    "owner_title_default": "Sir",
+    "registration_enabled": false,
+    "session_timeout_min": 30,
+    "lockout_threshold": 5,
+    "lockout_minutes": 15,
+    "login_attempt_retention_days": 30,
+    "remember_me_allowed": true,
+    "remember_me_days": 7,
+    "history_retention_days": 0,
+    "memory_auto_extract": true,
+    "memory_ai_learning": true,
+    "face_unlock_enabled": true,
+    "retrieval_memories": 6,
+    "retrieval_messages": 4
+  },
+  "research": {
+    "web_provider": "auto",
+    "news_provider": "auto",
+    "keyless_fallback": true,
+    "auto_research": true,
+    "region": "IN",
+    "language": "en",
+    "max_searches": 6,
+    "max_pages": 8,
+    "page_timeout_s": 15,
+    "total_timeout_s": 150,
+    "news_days": 7,
+    "max_page_kb": 3072,
+    "respect_robots": true
+  },
+  "ai": {
+    "provider": "groq",
+    "gemini_model": "gemini-3.6-flash",
+    "openai_model": "gpt-5-mini",
+    "max_output_tokens": 1024,
+    "temperature": null,
+    "streaming": true,
+    "timeout_s": 30,
+    "context_turns": 8,
+    "context_max_chars": 12000,
+    "concise": true,
+    "system_prompt_file": "config/system_prompt.txt",
+    "gemini_thinking_level": "low",
+    "openai_reasoning_effort": "low",
+    "max_retries": 2,
+    "groq_model": "openai/gpt-oss-120b",
+    "groq_reasoning_effort": "low",
+    "auto_switch": true,
+    "fallback_order": "groq,gemini,openai",
+    "switch_timeout_s": 12
+  },
+  "security": {
+    "monitor_enabled": true,
+    "external_lookups": false,
+    "threat_intel_provider": "none",
+    "advisory_feeds": true,
+    "scan_timeout_s": 120,
+    "file_integrity_enabled": true
+  }
+}
