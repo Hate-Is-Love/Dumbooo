@@ -8,7 +8,7 @@
 <img alt="Python 3.11" src="https://img.shields.io/badge/python-3.11-3776AB?logo=python&logoColor=white">
 <img alt="Windows 10/11" src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6?logo=windows&logoColor=white">
 <img alt="PySide6" src="https://img.shields.io/badge/UI-PySide6%20(Qt%206)-41CD52?logo=qt&logoColor=white">
-<img alt="Tests: 778 passing" src="https://img.shields.io/badge/tests-789%20passing-2ea44f?logo=pytest&logoColor=white">
+<img alt="Tests: 778 passing" src="https://img.shields.io/badge/tests-794%20passing-2ea44f?logo=pytest&logoColor=white">
 <img alt="Voice runs locally" src="https://img.shields.io/badge/voice-100%25%20local-0f8b9b">
 <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-yellow">
 </p>
@@ -37,7 +37,7 @@ news, laptop automation and security checks, in a sci-fi dashboard with a 3D voi
 | 🛡️ | **Security guardian** | Defender/firewall/update overview, startup-entry investigation (signature, SHA-256, publisher), suspicious-link checks, file integrity monitoring — read-only by default. |
 | 🔐 | **Accounts & privacy** | Owner and users, Argon2id passwords, **face unlock** with a liveness check, private history and long-term memory per user. Audio never leaves the PC. |
 | 🫧 | **Living interface** | Animated core that shows every state, and a 3D point-cloud blob that reacts to your voice and to DUMBOO’s own speech. |
-| 📱 | **DUMBOO Mobile** | Android companion app: pair with a QR code, talk to DUMBOO by text or push-to-talk, see your agenda and get reminders on your phone — encrypted and locked to your phone's own key. *(Phase 1 of 5)* |
+| 📱 | **DUMBOO Mobile** | Android companion app: pair with a QR code, talk to DUMBOO by text or push-to-talk, see your agenda and get reminders on your phone — encrypted and locked to your phone's own key; control the laptop screen, mouse and keyboard from the phone once you allow it. *(Phases 1–2 of 5)* |
 
 <table>
 <tr>
@@ -81,7 +81,7 @@ More in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and the illustrated [projec
 | Automation | uiautomation (Windows UI Automation) · mss · psutil · pypdf |
 | Security | argon2-cffi · Windows DPAPI · OpenCV (YuNet + SFace) face unlock · PowerShell/registry checks |
 | Storage | SQLite (WAL, FTS5) with versioned migrations and automatic backups |
-| Testing | pytest — 789 tests with fakes for microphone, speaker, camera, AI, web and system |
+| Testing | pytest — 794 tests with fakes for microphone, speaker, camera, AI, web and system |
 
 ## 🚀 Quick start
 
@@ -1738,3 +1738,32 @@ app: they pin the certificate and sign the challenge with a phone-style key. The
 * capability checks;
 * sessions ending on disconnect;
 * the flood limit.
+
+### 22.7 Phase 2: control the laptop from your phone
+
+The app's **Laptop** tab can show the laptop screen and use its mouse, keyboard and DUMBOO's laptop commands.
+It is **off for every phone** until you allow it.
+
+**Turn it on:** on the laptop, open ACCOUNT → Phone, select the phone and tick **Allow laptop control**.
+* DUMBOO asks for your **password** before turning it on. Turning it off needs no password.
+* The phone is updated at once, even while it's connected.
+
+| On the phone | What happens on the laptop |
+|---|---|
+| **Show screen** | A live picture of the main screen (about 5 frames per second, 1024 px wide, around 25 KB per frame). A new frame is sent only after the phone has received the last one, so a slow network never builds a backlog |
+| Tap / double tap / long press on the picture | Left click / double click / right click at that spot |
+| Touchpad: drag, tap | Moves the pointer, clicks where it is |
+| Scroll strip (drag up/down) | Scrolls whatever is under the pointer |
+| **Type** | Types the text into the window in front |
+| Key buttons | Esc, Tab, Enter, Backspace, Delete, arrows, Win, Copy, Paste, Undo, Alt+Tab, Save |
+| Shortcuts | Volume down/up/mute, play/pause, next track, show desktop, task view, snipping tool, **lock the laptop** |
+| Chat commands | "open Chrome", "check my laptop performance", "find PDFs in my Downloads" … run as on the laptop. Risky actions still ask "yes/no" in the phone chat |
+
+**Safety rules:**
+* While the phone uses the screen, mouse or keyboard, the laptop shows a banner and a Windows notification, at
+  most every 20 seconds.
+* Every use is recorded in the phone audit log.
+* Untick the box, remove the phone, or click **Turn phone link off** to stop at once.
+* Screen pictures are made only while **Show screen** is on, and are never saved.
+* The account also needs the `automation.input` permission (the owner has it).
+* Touchpad movements have their own higher rate limit (400 per 10 s), so normal use is never blocked.

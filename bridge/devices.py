@@ -29,6 +29,7 @@ CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"   # 32 symbols, no 0/O or 1/I
 PAIRING_WINDOW_S = 120.0
 MAX_CODE_TRIES = 5
 MAX_DEVICES_PER_USER = 5
+SENSITIVE_CAPABILITIES = {"laptop_control"}
 
 
 @dataclass
@@ -97,6 +98,7 @@ class DeviceRegistry:
         self._windows: list[_Window] = []
         self._lock = threading.Lock()
         self.on_revoked: Callable[[int], None] = lambda device_id: None   # the server closes that phone's link
+        self.on_capabilities: Callable[[int], None] = lambda device_id: None   # the server updates live links
 
     def _now(self) -> str:
         return self._clock().isoformat(timespec="seconds")
@@ -216,8 +218,13 @@ class DeviceRegistry:
             self.on_revoked(int(device_id))
         return bool(changed)
 
-    def set_capability(self, session, device_id: int, capability: str, allowed: bool) -> dict:
+    def set_capability(self, session, device_id: int, capability: str, allowed: bool, password: str | None = None) -> dict:
+        """Change what a phone may do. Allowing laptop control needs the account password again."""
         user = self._auth.require(session)
+        if allowed and capability in SENSITIVE_CAPABILITIES:
+            if not password:
+                raise ProtocolError("password_required", "Enter your password to allow laptop control.")
+            self._auth.reauthenticate(session, password)
         if capability not in DEFAULT_CAPABILITIES:
             raise ProtocolError("bad_request", "unknown capability")
         row = self._db.row("SELECT capabilities FROM paired_devices WHERE id = ? AND user_id = ? AND revoked_at IS NULL",
@@ -227,6 +234,7 @@ class DeviceRegistry:
         caps = {**DEFAULT_CAPABILITIES, **json.loads(row["capabilities"] or "{}"), capability: bool(allowed)}
         self._db.execute("UPDATE paired_devices SET capabilities = ? WHERE id = ?", (json.dumps(caps), int(device_id)))
         self.audit("capability", int(device_id), user.id, f"{capability}={'on' if allowed else 'off'}")
+        self.on_capabilities(int(device_id))
         return caps
 
 

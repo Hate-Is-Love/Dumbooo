@@ -87,3 +87,28 @@ All frames are JSON text. `t` is the message type.
   `bridge/link.py` (one phone's conversation, voice, agenda and reminders), `dashboard/widgets/phone_section.py`.
 * Phone: `mobile/android/` (Kotlin, Jetpack Compose).
 * Tests: `tests/test_bridge.py` (real TLS WebSocket connections in-process; no phone needed).
+
+## Phase 2: laptop control
+
+Switched on per phone with the `laptop_control` capability. Allowing it needs the account password
+(`DeviceRegistry.set_capability(..., password)`); turning it off doesn't. Live phones receive
+`{"t":"caps","caps":{...}}` at once. Every message below also needs the user's `automation.input` permission.
+Laptop actions from phone chat (automation, security changes, opening or saving through research) are allowed only
+while the capability is on (`AssistantCore._phone_may_control` → `PhoneBridge.allows_control`).
+
+| Direction | Message | Meaning |
+|---|---|---|
+| phone → laptop | `{"t":"screen.start","fps":5,"width":1024,"quality":60}` | Start the screen picture (at most 8 fps, 320–1600 px wide) |
+| laptop → phone | `{"t":"screen.frame","seq":3,"w":2560,"h":1600,"img":"<base64 JPEG>"}` | One frame; `w`/`h` are the laptop's real size |
+| phone → laptop | `{"t":"screen.ack","seq":3}` | Frame received; the next one is sent only after this (or after 2 s) |
+| phone → laptop | `{"t":"screen.stop"}` | Stop |
+| phone → laptop | `{"t":"input.click","x":0.5,"y":0.25,"button":"left","double":false}` | Click at a position given as 0–1 across and down; omit x/y to click where the pointer is |
+| phone → laptop | `{"t":"input.move","dx":12,"dy":-4}` | Touchpad: move the pointer (kept on the main screen) |
+| phone → laptop | `{"t":"input.scroll","clicks":-3}` | Scroll under the pointer (at most 15) |
+| phone → laptop | `{"t":"input.key","combo":"ctrl+c"}` | Key or combination; only known key names, including media keys (`volumeup`, `playpause` …) |
+| phone → laptop | `{"t":"input.text","text":"hello"}` | Type into the window in front (at most 500 characters) |
+
+The laptop publishes `PHONE_CONTROL` (banner and notification) and audits `remote_control`, at most every 20 s while
+in use, and also when the screen picture stops. The `input.*` and `screen.ack` messages have their own rate limit
+(400 per 10 s). Code: `bridge/remote.py` (screen frames with mss + OpenCV JPEG; input through the existing
+`automation/platform` desktop layer).

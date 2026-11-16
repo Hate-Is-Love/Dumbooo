@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMessageBox, QPushButton
+from PySide6.QtWidgets import (QCheckBox, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget,
+                               QListWidgetItem, QMessageBox, QPushButton)
 
 from dashboard.widgets.hud import HudPanel, hud_value
 
@@ -52,6 +53,13 @@ class PhoneSection(HudPanel):
         self.pair.clicked.connect(self._pair)
         self.devices = QListWidget()
         self.devices.setMaximumHeight(120)
+        self.devices.currentItemChanged.connect(lambda *_: self._sync_control())
+        self.control = QCheckBox("Allow laptop control from this phone")
+        self.control.setToolTip("Mouse, keyboard, the laptop screen and DUMBOO's laptop commands from the phone. "
+                                "Needs your password to switch on.")
+        self.control.clicked.connect(self._control_clicked)
+        self.control.setEnabled(False)
+        self._caps: dict[int, dict] = {}
         self.remove = QPushButton("REMOVE PHONE")
         self.remove.setObjectName("Danger")
         self.remove.clicked.connect(self._remove)
@@ -62,11 +70,11 @@ class PhoneSection(HudPanel):
         row.addWidget(self.toggle)
         note = QLabel("Install DUMBOO Mobile on your Android phone, tap “Pair with laptop” and scan the code. Only a "
                       "phone that scans it can connect: the link is encrypted and locked to that phone's own key. "
-                      "Remove a phone here to cut it off at once. Controlling the laptop from the phone stays off "
-                      "until a later update.")
+                      "Remove a phone here to cut it off at once. Laptop control (screen, mouse, keyboard, commands) "
+                      "is off until you allow it for a phone; you'll see a notice whenever it's used.")
         note.setWordWrap(True)
         note.setObjectName("HudLabel")
-        for w in (self.status, self.qr, self.code, self.pair, self.devices):
+        for w in (self.status, self.qr, self.code, self.pair, self.devices, self.control):
             self.body.addWidget(w)
         self.body.addLayout(row)
         self.body.addWidget(note)
@@ -107,6 +115,10 @@ class PhoneSection(HudPanel):
             placeholder = QListWidgetItem("No phones paired yet")
             placeholder.setFlags(Qt.ItemFlag.NoItemFlags)
             self.devices.addItem(placeholder)
+        self._caps = {d["id"]: d["capabilities"] for d in devices}
+        if devices and self.devices.currentItem() is None:
+            self.devices.setCurrentRow(0)
+        self._sync_control()
         new = {d["id"] for d in devices} - self._known
         if self._timer.isActive() and new and self._known is not None:
             name = next(d["name"] for d in devices if d["id"] in new)
@@ -170,6 +182,39 @@ class PhoneSection(HudPanel):
             return
         session = self._c.session
         self._c.run_async(lambda: self._c.core.devices.revoke(session, device_id), lambda _r: self.refresh())
+
+    def _selected(self) -> int | None:
+        item = self.devices.currentItem()
+        return item.data(Qt.ItemDataRole.UserRole) if item else None
+
+    def _sync_control(self) -> None:
+        device_id = self._selected()
+        caps = self._caps.get(device_id) if device_id is not None else None
+        self.control.setEnabled(caps is not None)
+        self.control.setChecked(bool(caps and caps.get("laptop_control")))
+
+    def _control_clicked(self, checked: bool) -> None:
+        device_id, session = self._selected(), self._c.session
+        if device_id is None or session is None:
+            return
+        password = None
+        if checked:
+            password, ok = QInputDialog.getText(
+                self, "Allow laptop control",
+                "This phone will be able to see the screen and use the mouse, keyboard and DUMBOO's laptop commands.\n"
+                "Enter your DUMBOO password to allow it:", QLineEdit.EchoMode.Password)
+            if not ok or not password:
+                self.control.setChecked(False)
+                return
+
+        def failed(exc) -> None:
+            self.control.setChecked(not checked)
+            QMessageBox.warning(self, "Phone", getattr(exc, "user_message", None) or getattr(exc, "message", None)
+                                or str(exc))
+
+        self._c.run_async(lambda: self._c.core.devices.set_capability(session, device_id, "laptop_control", checked,
+                                                                      password),
+                          lambda _caps: self.refresh(), on_exception=failed)
 
     def _toggle(self) -> None:
         self._c.run_async(lambda: self._c.core.bridge.set_enabled(False), lambda _r: self.refresh())

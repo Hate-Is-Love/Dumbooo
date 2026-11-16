@@ -664,6 +664,15 @@ class MainWindow(QMainWindow):
             a.conversation.add_message("system", text)
             self.notify("DUMBOO reminder", text)
             self._agenda_changed()
+        elif name == Events.PHONE_CONTROL:
+            what = {"screen": "viewing the screen", "mouse": "using the mouse", "keyboard": "typing"}.get(
+                payload.get("what"), "controlling")
+            if payload.get("active"):
+                text = f"📱 {payload.get('name', 'Your phone')} is {what} on this laptop · stop it: ACCOUNT → Phone"
+                a.show_banner(text, seconds=12)
+                self.notify("DUMBOO Mobile", text)
+            else:
+                a.show_banner(f"📱 {payload.get('name', 'Your phone')} stopped viewing the screen", seconds=5)
         elif name == Events.ERROR:
             if payload.get("source") != "assistant":  # AI errors are shown in the conversation with RETRY
                 a.show_banner(f"⚠  {payload.get('message', 'error')}", error=True)

@@ -18,7 +18,9 @@ import numpy as np
 
 from ai.controller import ConversationController
 from app.event_bus import EventBus, Events
-from bridge.protocol import MAX_VOICE_SECONDS, VOICE_RATES, ProtocolError, b64decode, text_field
+from bridge.protocol import (MAX_SCREEN_FPS, MAX_VOICE_SECONDS, VOICE_RATES, ProtocolError, b64, b64decode,
+                             text_field)
+from bridge.remote import RemoteControl, RemoteError
 from services.schedule_service import ReminderService, reminder_speech
 
 log = logging.getLogger(__name__)
@@ -29,8 +31,14 @@ DELTA_EVERY_S = 0.15
 
 class PhoneLink:
     def __init__(self, core, device, session, send: Callable[[dict], None],
-                 clock: Callable[[], datetime] = datetime.now, poll_interval_s: float = 15.0) -> None:
+                 clock: Callable[[], datetime] = datetime.now, poll_interval_s: float = 15.0,
+                 remote: RemoteControl | None = None) -> None:
         self._core = core
+        self._remote = remote or RemoteControl(core.desktop)
+        self._screen_stop = threading.Event()
+        self._screen_thread: threading.Thread | None = None
+        self._screen_acked = threading.Event()
+        self._last_notice = 0.0
         self.device = device
         self.session = session
         self._send = send
@@ -69,6 +77,8 @@ class PhoneLink:
         elif kind == "agenda.get":
             self._require("agenda")
             self._send(self.agenda())
+        elif kind.startswith("input.") or kind.startswith("screen."):
+            self._control(kind, msg)
         else:
             raise ProtocolError("unknown_type", f"unknown message type: {kind}")
 
@@ -76,6 +86,96 @@ class PhoneLink:
         if not self.device.can(capability):
             raise ProtocolError("not_allowed", f"This phone isn't allowed to use “{capability}”. Change it on the "
                                                "laptop: ACCOUNT → Phone.")
+
+    # -- laptop control (Phase 2) ---------------------------------------------------------------------------------
+    def update_device(self, device) -> None:
+        """Capabilities changed on the laptop: apply them now and tell the phone."""
+        self.device = device
+        if not device.can("laptop_control"):
+            self._stop_screen()
+        self._send({"t": "caps", "caps": device.capabilities})
+
+    def _control(self, kind: str, msg: dict) -> None:
+        self._require("laptop_control")
+        self._core.auth.require(self.session, "automation.input")
+        try:
+            if kind == "screen.start":
+                self._start_screen(msg)
+            elif kind == "screen.stop":
+                self._stop_screen()
+            elif kind == "screen.ack":
+                self._screen_acked.set()
+            elif kind == "input.click":
+                self._remote.click(msg.get("x"), msg.get("y"), str(msg.get("button", "left")), bool(msg.get("double")))
+                self._notice("mouse")
+            elif kind == "input.move":
+                self._remote.move(msg.get("dx"), msg.get("dy"))
+            elif kind == "input.scroll":
+                self._remote.scroll(msg.get("clicks"))
+            elif kind == "input.key":
+                self._remote.key(msg.get("combo"))
+                self._notice("keyboard")
+            elif kind == "input.text":
+                self._remote.text(msg.get("text"))
+                self._notice("keyboard")
+            else:
+                raise ProtocolError("unknown_type", f"unknown message type: {kind}")
+        except RemoteError as exc:
+            raise ProtocolError("bad_request", str(exc)) from exc
+
+    def _notice(self, what: str, active: bool = True) -> None:
+        """Tell the laptop's user (banner + log) that this phone is controlling it; at most every 20 s."""
+        now = time.monotonic()
+        if active and now - self._last_notice < 20:
+            return
+        self._last_notice = now if active else 0.0
+        self._core.bus.publish(Events.PHONE_CONTROL, {"device": self.device.id, "name": self.device.name,
+                                                      "what": what, "active": active})
+        if active:
+            self._core.devices.audit("remote_control", self.device.id, self.device.user_id, what)
+
+    def _start_screen(self, msg: dict) -> None:
+        fps = msg.get("fps", 5)
+        width = msg.get("width", 1024)
+        quality = msg.get("quality", 60)
+        if not all(isinstance(v, (int, float)) for v in (fps, width, quality)):
+            raise ProtocolError("bad_request", "fps, width and quality must be numbers")
+        self._stop_screen()
+        self._screen_stop.clear()
+        self._screen_acked.set()
+        interval = 1.0 / max(1.0, min(float(MAX_SCREEN_FPS), float(fps)))
+        self._last_notice = 0.0
+        self._notice("screen")
+
+        def stream() -> None:
+            seq = 0
+            while not self._screen_stop.is_set():
+                started = time.monotonic()
+                # wait for the phone to confirm the last frame (at most 2 s), so a slow network never piles up frames
+                self._screen_acked.wait(2.0)
+                if self._screen_stop.is_set():
+                    break
+                self._screen_acked.clear()
+                try:
+                    jpeg, w, h = self._remote.frame(int(width), int(quality))
+                except Exception as exc:
+                    log.warning("Screen capture for the phone failed: %s", exc.__class__.__name__)
+                    self._send({"t": "error", "code": "screen", "message": "The laptop screen couldn't be captured."})
+                    break
+                seq += 1
+                self._send({"t": "screen.frame", "seq": seq, "w": w, "h": h, "img": b64(jpeg)})
+                self._screen_stop.wait(max(0.0, interval - (time.monotonic() - started)))
+
+        self._screen_thread = threading.Thread(target=stream, name="PhoneScreen", daemon=True)
+        self._screen_thread.start()
+
+    def _stop_screen(self) -> None:
+        self._screen_stop.set()
+        self._screen_acked.set()
+        thread, self._screen_thread = self._screen_thread, None
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=3)
+            self._notice("screen", active=False)
 
     def ask(self, text: str, message_id) -> None:
         with self._lock:
@@ -177,6 +277,7 @@ class PhoneLink:
 
     # -- end ---------------------------------------------------------------------------------------------------
     def close(self) -> None:
+        self._stop_screen()
         self._reminders.stop()
         self.conversation.cancel("phone disconnected")
         self._stt.shutdown(wait=False, cancel_futures=True)

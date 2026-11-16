@@ -1,6 +1,8 @@
 package com.dumboo.mobile
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.os.Build
 import android.util.Base64
 import kotlinx.coroutines.CoroutineScope
@@ -47,6 +49,9 @@ data class Reminder(val title: String, val text: String, val missed: Boolean)
 
 data class Spoken(val text: String)
 
+/** One picture of the laptop screen, with the laptop's real resolution (for mapping taps to clicks). */
+data class ScreenFrame(val bitmap: Bitmap, val width: Int, val height: Int)
+
 /**
  * The secure link to DUMBOO on the laptop (docs/PHONE_BRIDGE.md): a WebSocket over TLS that trusts only the paired
  * laptop's certificate, then a signed challenge that proves this is the paired phone. Reconnects by itself.
@@ -74,6 +79,13 @@ object Bridge {
     private val _speak = MutableSharedFlow<Spoken>(extraBufferCapacity = 8)
     val speak: SharedFlow<Spoken> = _speak.asSharedFlow()
     private val voiceIds = mutableSetOf<Long>()
+    private val _laptopControl = MutableStateFlow(false)
+    /** True when the laptop allows this phone to control it (switched on there, with the password). */
+    val laptopControl: StateFlow<Boolean> = _laptopControl.asStateFlow()
+    private val _screen = MutableStateFlow<ScreenFrame?>(null)
+    val screen: StateFlow<ScreenFrame?> = _screen.asStateFlow()
+    @Volatile private var screenWanted = false
+    private var screenWidth = 1024
 
     // -- connecting ---------------------------------------------------------------------------------------------
     fun start(context: Context) {
@@ -226,7 +238,9 @@ object Bridge {
                     }
                 }
                 _state.value = LinkState.Ready(user, host)
+                _laptopControl.value = msg.optJSONObject("caps")?.optBoolean("laptop_control") == true
                 requestAgenda()
+                if (screenWanted && _laptopControl.value) startScreen(screenWidth)
             }
             "error" -> {
                 val code = msg.optString("code")
@@ -263,6 +277,18 @@ object Bridge {
             "answer.error" -> upsertAnswer(msg.optLong("id"), msg.optString("message", "Failed"), pending = false,
                 error = true)
             "agenda" -> _agenda.value = parseAgenda(msg)
+            "caps" -> {
+                _laptopControl.value = msg.optJSONObject("caps")?.optBoolean("laptop_control") == true
+                if (!_laptopControl.value) { screenWanted = false; _screen.value = null }
+            }
+            "screen.frame" -> {
+                val bytes = Base64.decode(msg.getString("img"), Base64.DEFAULT)
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.let {
+                    _screen.value = ScreenFrame(it, msg.optInt("w"), msg.optInt("h"))
+                }
+                // confirm the frame: the laptop sends the next one only then (no backlog on a slow network)
+                ws.send(JSONObject().put("t", "screen.ack").put("seq", msg.optInt("seq")).toString())
+            }
             "reminder" -> _reminders.tryEmit(Reminder(msg.optString("title"), msg.optString("text"),
                 msg.optBoolean("missed")))
         }
@@ -334,6 +360,44 @@ object Bridge {
     }
 
     fun clearChat() = _chat.update { emptyList() }
+
+    // -- laptop control (Phase 2) -------------------------------------------------------------------------------
+    private fun control(msg: JSONObject) {
+        if (ready() && _laptopControl.value) socket?.send(msg.toString())
+    }
+
+    fun startScreen(width: Int = 1024, fps: Int = 5) {
+        screenWanted = true
+        screenWidth = width
+        control(JSONObject().put("t", "screen.start").put("fps", fps).put("width", width).put("quality", 60))
+    }
+
+    fun stopScreen() {
+        screenWanted = false
+        control(JSONObject().put("t", "screen.stop"))
+        _screen.value = null
+    }
+
+    /** Click at a position on the laptop screen (0..1 across and down), or where the cursor is (null). */
+    fun click(x: Float? = null, y: Float? = null, button: String = "left", double: Boolean = false) {
+        val msg = JSONObject().put("t", "input.click").put("button", button).put("double", double)
+        if (x != null && y != null) msg.put("x", x.coerceIn(0f, 1f).toDouble()).put("y", y.coerceIn(0f, 1f).toDouble())
+        control(msg)
+    }
+
+    fun move(dx: Int, dy: Int) {
+        if (dx != 0 || dy != 0) control(JSONObject().put("t", "input.move").put("dx", dx).put("dy", dy))
+    }
+
+    fun scroll(clicks: Int) {
+        if (clicks != 0) control(JSONObject().put("t", "input.scroll").put("clicks", clicks))
+    }
+
+    fun key(combo: String) = control(JSONObject().put("t", "input.key").put("combo", combo))
+
+    fun type(text: String) {
+        if (text.isNotEmpty()) control(JSONObject().put("t", "input.text").put("text", text.take(500)))
+    }
 
     private fun deviceName(): String =
         "${Build.MANUFACTURER.replaceFirstChar { it.uppercase() }} ${Build.MODEL}".take(60)

@@ -386,14 +386,16 @@ class AssistantCore:
         self.devices = DeviceRegistry(self.db, self.auth)
         self.bridge = PhoneBridge(self, lambda: self.settings.section("bridge"), identity, self.devices,
                                   **overrides.get("bridge", {}))
+        self.bridge.remote_factory = overrides.get("remote")   # tests: a fake screen and input layer
         # Until laptop control is switched on for a phone (Phase 2), phone messages can't run laptop actions.
         self.automation_assistant.remote_allowed = self._phone_may_control
         self.guardian_assistant.remote_allowed = self._phone_may_control
         self.research_assistant.remote_allowed = self._phone_may_control
 
-    @staticmethod
-    def _phone_may_control(scope) -> bool:
-        return False
+    def _phone_may_control(self, scope) -> bool:
+        """Phone messages may run laptop actions only if laptop control is switched on for that phone."""
+        bridge = getattr(self, "bridge", None)
+        return bridge is not None and bridge.allows_control(scope)
 
     def _greet(self, _name: str, payload: dict) -> None:
         """After any sign-in: greet the user (first time: DUMBOO introduces itself). ACCOUNT page can turn it off."""

@@ -77,12 +77,12 @@ import com.dumboo.mobile.Store
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 
-private val Cyan = Color(0xFF3FE0E8)
-private val Violet = Color(0xFF9B8CFF)
-private val Ink = Color(0xFF071114)
-private val Panel = Color(0xFF0D1B20)
-private val Muted = Color(0xFF7FA6AD)
-private val Danger = Color(0xFFFF6B7A)
+internal val Cyan = Color(0xFF3FE0E8)
+internal val Violet = Color(0xFF9B8CFF)
+internal val Ink = Color(0xFF071114)
+internal val Panel = Color(0xFF0D1B20)
+internal val Muted = Color(0xFF7FA6AD)
+internal val Danger = Color(0xFFFF6B7A)
 
 private val colors = darkColorScheme(primary = Cyan, onPrimary = Ink, secondary = Violet, background = Ink,
     surface = Panel, onBackground = Color(0xFFDDF4F6), onSurface = Color(0xFFDDF4F6), error = Danger)
@@ -105,7 +105,7 @@ fun DumbooApp(unlocked: Boolean, pairLink: String?, onPairLinkUsed: () -> Unit, 
 }
 
 @Composable
-private fun Title(text: String) = Text(text, color = Cyan, fontFamily = FontFamily.Monospace, fontSize = 13.sp,
+internal fun Title(text: String) = Text(text, color = Cyan, fontFamily = FontFamily.Monospace, fontSize = 13.sp,
     letterSpacing = 3.sp, fontWeight = FontWeight.Bold)
 
 @Composable
@@ -181,6 +181,8 @@ private fun MainScreens(state: LinkState) {
                 icon = { Icon(Icons.Filled.Home, null) }, label = { Text("DUMBOO") })
             NavigationBarItem(selected = tab == 1, onClick = { tab = 1; Bridge.requestAgenda() },
                 icon = { Icon(Icons.Filled.DateRange, null) }, label = { Text("Agenda") })
+            NavigationBarItem(selected = tab == 3, onClick = { tab = 3 },
+                icon = { Text("💻", fontSize = 20.sp) }, label = { Text("Laptop") })
             NavigationBarItem(selected = tab == 2, onClick = { tab = 2 },
                 icon = { Icon(Icons.Filled.Settings, null) }, label = { Text("Settings") })
         }
@@ -190,6 +192,7 @@ private fun MainScreens(state: LinkState) {
             when (tab) {
                 0 -> ChatScreen()
                 1 -> AgendaScreen()
+                3 -> LaptopScreen()
                 else -> SettingsScreen(state)
             }
         }

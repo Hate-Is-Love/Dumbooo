@@ -84,6 +84,7 @@ class Events:
     STOP_SPEAKING = "playback.stop"            # {"source": str}
     INTERRUPTION_DETECTED = "interruption"     # {"speech_ms": float}
 
+    PHONE_CONTROL = "phone.control"            # {"device", "name", "what", "active"} a phone is controlling the laptop
     REMINDER_DUE = "reminder.due"              # {"kind": "event"|"task", "event_id"|"task_id": int, "title", "starts_at", "missed"?}
     SETTINGS_CHANGED = "settings.changed"      # {"settings": dict, "changed": list[str]}
     ERROR = "error"                            # {"source": str, "message": str, "recoverable": bool}

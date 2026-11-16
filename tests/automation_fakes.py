@@ -132,6 +132,13 @@ class FakeDesktop:
     def scroll(self, hwnd: int, clicks: int) -> None:
         self.scrolled.append((hwnd, clicks))
 
+    def cursor_position(self) -> tuple[int, int]:
+        return getattr(self, "_cursor", (100, 100))
+
+    def move_cursor(self, x: int, y: int) -> None:
+        self._cursor = (int(x), int(y))
+        self.__dict__.setdefault("moves", []).append((int(x), int(y)))
+
     def click(self, x: int, y: int, button: str = "left", double: bool = False) -> None:
         self.clicks.append((x, y))
 

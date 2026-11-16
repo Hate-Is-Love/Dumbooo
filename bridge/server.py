@@ -70,7 +70,9 @@ class PhoneBridge:
         self._lock = threading.Lock()
         self.last_error = ""
         self.port = 0
+        self.remote_factory = None           # tests inject a fake RemoteControl factory
         registry.on_revoked = self._close_device
+        registry.on_capabilities = self._capabilities_changed
         core.bus.subscribe(Events.REMINDER_DUE, self._forward_reminder)
 
     # -- lifecycle ------------------------------------------------------------------------------------------------
@@ -171,24 +173,32 @@ class PhoneBridge:
             send({"t": "error", "code": "account", "message": getattr(exc, "user_message", "Account not available")})
             connection.close(1008, "account")
             return
-        link = PhoneLink(self._core, device, session, send)
+        remote = self.remote_factory() if self.remote_factory else None
+        link = PhoneLink(self._core, device, session, send, remote=remote)
         with self._lock:
             self._links.setdefault(device.id, []).append((link, connection))
         self.registry.audit("connected", device.id, device.user_id, connection.remote_address[0]
                             if connection.remote_address else "")
         send({"t": "ready", "device": device.id, "user": session.display_name, "caps": device.capabilities})
-        recent: deque[float] = deque()
+        recent: deque[float] = deque()       # chat, voice, agenda: 20 per 10 s
+        fast: deque[float] = deque()         # touchpad, keys, screen acks: 400 per 10 s
         try:
             for frame in connection:
+                try:
+                    msg = P.parse(frame)
+                except P.ProtocolError as exc:
+                    send({"t": "error", "code": exc.code, "message": exc.message})
+                    continue
+                bucket, limit = (fast, P.INPUT_RATE_MAX) if msg["t"] in P.INPUT_TYPES else (recent, P.RATE_MAX_MESSAGES)
                 now = time.monotonic()
-                while recent and now - recent[0] > P.RATE_WINDOW_S:
-                    recent.popleft()
-                recent.append(now)
-                if len(recent) > P.RATE_MAX_MESSAGES:
+                while bucket and now - bucket[0] > P.RATE_WINDOW_S:
+                    bucket.popleft()
+                bucket.append(now)
+                if len(bucket) > limit:
                     send({"t": "error", "code": "rate_limit", "message": "Too many messages; slow down a little."})
                     continue
                 try:
-                    link.handle(P.parse(frame))
+                    link.handle(msg)
                 except P.ProtocolError as exc:
                     send({"t": "error", "code": exc.code, "message": exc.message})
                 except Exception:
@@ -233,6 +243,21 @@ class PhoneBridge:
                 connection.close(1008, "removed")
             except Exception:
                 pass
+
+    def _capabilities_changed(self, device_id: int) -> None:
+        device = self.registry.get(device_id)
+        with self._lock:
+            links = [link for link, _c in self._links.get(device_id, [])]
+        for link in links:
+            if device is not None:
+                link.update_device(device)
+
+    def allows_control(self, scope) -> bool:
+        """Is ``scope`` the session of a connected phone that may control the laptop?"""
+        token = getattr(scope, "token_hash", None)
+        with self._lock:
+            links = [link for items in self._links.values() for link, _c in items]
+        return any(link.session.token_hash == token and link.device.can("laptop_control") for link in links)
 
     def connected_devices(self) -> set[int]:
         with self._lock:

@@ -679,3 +679,33 @@ Full suite: **789 passed**.
 * The app on a real phone: pairing by QR, chat, push-to-talk, notifications, the app lock. No phone was connected,
   and the emulator wasn't started because of the PC's memory use.
 * Connecting from outside the home network (Phase 5, Tailscale).
+
+---
+
+# DUMBOO Mobile, Phase 2: laptop control (2026-11-16)
+
+`tests/test_bridge.py` gained 5 tests (16 in total, passing 3 runs in a row). They cover:
+
+* **Off by default:** clicks and the screen are refused with `not_allowed` until laptop control is allowed.
+  Allowing it without the password, or with the wrong one, is refused; with the right password, the connected
+  phone is told at once.
+* **Mouse and keys:** a click at 0.5/0.25 lands on pixel 959,269 of a 1920×1080 screen. The touchpad moves the
+  pointer relative to where it is. Scrolling, media keys and key combos work. An unknown key is refused (checked by
+  DUMBOO, not left to Windows).
+* **Notice and log:** the laptop notice event is published, and the use is audited.
+* **Screen:** frames carry the laptop's real size, and the next frame comes only after the phone confirms the last.
+  Stopping works.
+* **Commands:** "open notepad" from the phone is refused while control is off and runs once it's allowed. Switching
+  control off (no password needed) takes effect immediately.
+* **Rate limit:** 60 quick touchpad moves pass the separate input limit.
+
+**Real hardware (read-only):** a screen frame of this laptop's 2560×1600 display, at 1024 px wide, is about 25 KB
+and takes about 90 ms. The cursor position reads correctly. The real mouse was **not** moved, and no real keys
+were sent.
+
+**Android:** version 0.2.0 builds without warnings and adds the Laptop tab (screen, touchpad, scroll strip,
+keyboard, keys, shortcuts).
+
+Full suite: **794 passed**.
+
+**Not verified yet:** using all of this from a real phone.

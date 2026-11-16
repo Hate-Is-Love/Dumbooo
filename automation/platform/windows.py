@@ -120,12 +120,16 @@ VK = {
     "delete": 0x2E, "del": 0x2E, "insert": 0x2D, "home": 0x24, "end": 0x23, "pageup": 0x21, "pagedown": 0x22,
     "left": 0x25, "up": 0x26, "right": 0x27, "down": 0x28, "plus": 0xBB, "=": 0xBB, "minus": 0xBD, "-": 0xBD,
     ",": 0xBC, ".": 0xBE, "/": 0xBF, "printscreen": 0x2C,
+    # media and volume keys (DUMBOO Mobile shortcuts)
+    "volumemute": 0xAD, "volumedown": 0xAE, "volumeup": 0xAF, "nexttrack": 0xB0, "prevtrack": 0xB1,
+    "stopmedia": 0xB2, "playpause": 0xB3,
     **{f"f{i}": 0x6F + i for i in range(1, 25)},
     **{chr(c): c for c in range(ord("a"), ord("z") + 1)},
     **{str(d): 0x30 + d for d in range(10)},
 }
 VK = {k: (v - 32 if len(k) == 1 and "a" <= k <= "z" else v) for k, v in VK.items()}  # letters use upper-case codes
-EXTENDED = {0x2E, 0x2D, 0x24, 0x23, 0x21, 0x22, 0x25, 0x26, 0x27, 0x28, 0x5B}
+EXTENDED = {0x2E, 0x2D, 0x24, 0x23, 0x21, 0x22, 0x25, 0x26, 0x27, 0x28, 0x5B,
+            0xAD, 0xAE, 0xAF, 0xB0, 0xB1, 0xB2, 0xB3}
 SHELL_CLASSES = {"Shell_TrayWnd", "Progman", "WorkerW", "Shell_SecondaryTrayWnd", "Windows.UI.Core.CoreWindow"}
 
 
@@ -380,6 +384,14 @@ class WindowsDesktop:
               for c in reversed(codes)]
         _send(down + up)
         time.sleep(0.05)
+
+    def cursor_position(self) -> tuple[int, int]:
+        point = wintypes.POINT()
+        user32.GetCursorPos(ctypes.byref(point))
+        return point.x, point.y
+
+    def move_cursor(self, x: int, y: int) -> None:
+        user32.SetCursorPos(int(x), int(y))
 
     def scroll(self, hwnd: int, clicks: int) -> None:
         info = self._info(hwnd)

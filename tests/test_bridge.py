@@ -235,3 +235,99 @@ def test_the_bridge_is_off_until_a_phone_is_paired(paths):
         assert not r.core.bridge.running and not r.core.settings.get("bridge", "enabled")
     finally:
         r.close()
+
+
+# -- Phase 2: laptop control from the phone ---------------------------------------------------------------------------
+def controllable(rig):
+    """A paired phone with a fake 1920x1080 screen; laptop control is still off."""
+    from bridge.remote import RemoteControl
+
+    rig.core.bridge.remote_factory = lambda: RemoteControl(
+        rig.core.desktop, monitor=lambda: (0, 0, 1920, 1080), frame=lambda w, q: (b"\xff\xd8jpeg", 1920, 1080))
+    return paired(rig)
+
+
+def allow_control(rig, phone, device_id):
+    from tests.test_application import OWNER
+
+    rig.core.devices.set_capability(rig.session, device_id, "laptop_control", True, OWNER[2])
+    assert phone.until("caps")["caps"]["laptop_control"] is True
+
+
+def test_laptop_control_is_off_until_allowed_with_the_password(rig):
+    from bridge.protocol import ProtocolError
+    from services.auth_service import InvalidCredentials
+
+    phone, ready, _offer = controllable(rig)
+    phone.send({"t": "input.click", "x": 0.5, "y": 0.5})
+    assert phone.until("error")["code"] == "not_allowed"
+    phone.send({"t": "screen.start", "fps": 5})
+    assert phone.until("error")["code"] == "not_allowed"
+    with pytest.raises(ProtocolError):
+        rig.core.devices.set_capability(rig.session, ready["device"], "laptop_control", True)       # no password
+    with pytest.raises(InvalidCredentials):
+        rig.core.devices.set_capability(rig.session, ready["device"], "laptop_control", True, "wrong-password")
+    allow_control(rig, phone, ready["device"])                     # the live phone is told at once
+    assert rig.core.desktop.clicks == []
+
+
+def test_mouse_keyboard_and_shortcuts_from_the_phone(rig):
+    phone, ready, _offer = controllable(rig)
+    allow_control(rig, phone, ready["device"])
+    desktop = rig.core.desktop
+    phone.send({"t": "input.click", "x": 0.5, "y": 0.25})
+    phone.send({"t": "input.move", "dx": 40, "dy": -10})
+    phone.send({"t": "input.scroll", "clicks": -3})
+    phone.send({"t": "input.key", "combo": "volumeup"})
+    phone.send({"t": "input.key", "combo": "ctrl+c"})
+    phone.send({"t": "ping"})
+    phone.until("pong")                                            # everything above has been handled
+    assert desktop.clicks[0] == (959, 269)                          # normalised position -> laptop pixels
+    assert desktop.moves[-1] == (140, 90)                           # touchpad: relative to the cursor
+    assert desktop.scrolled[-1] == (0, -3)
+    assert [c for _w, c in desktop.pressed][-2:] == ["volumeup", "ctrl+c"]
+    phone.send({"t": "input.key", "combo": "not-a-key"})
+    assert phone.until("error")["code"] == "bad_request"
+    assert wait_for(lambda: any(n == Events.PHONE_CONTROL for n in rig.rec.names()))   # the laptop shows a notice
+    assert "remote_control" in [e["event"] for e in rig.core.devices.events(rig.session)]
+
+
+def test_screen_frames_wait_for_the_phone_and_stop(rig):
+    phone, ready, _offer = controllable(rig)
+    allow_control(rig, phone, ready["device"])
+    phone.send({"t": "screen.start", "fps": 8, "width": 800})
+    first = phone.until("screen.frame")
+    assert (first["w"], first["h"]) == (1920, 1080) and base64.b64decode(first["img"]).startswith(b"\xff\xd8")
+    phone.send({"t": "screen.ack", "seq": first["seq"]})
+    second = phone.until("screen.frame")
+    assert second["seq"] == first["seq"] + 1
+    phone.send({"t": "screen.stop"})
+    phone.send({"t": "ping"})
+    phone.until("pong")
+    time.sleep(0.4)
+    phone.send({"t": "ping"})
+    later = phone.until("pong")
+    assert later["t"] == "pong"
+
+
+def test_dumboo_commands_run_from_the_phone_once_allowed_and_stop_when_switched_off(rig):
+    phone, ready, _offer = controllable(rig)
+    phone.send({"t": "chat", "id": 1, "text": "open notepad"})
+    assert "switched off" in phone.until("answer")["text"]
+    allow_control(rig, phone, ready["device"])
+    phone.send({"t": "chat", "id": 2, "text": "open notepad please"})   # identical repeats within 3 s are ignored
+    assert "switched off" not in phone.until("answer", timeout=15)["text"]
+    rig.core.devices.set_capability(rig.session, ready["device"], "laptop_control", False)   # no password to switch off
+    assert phone.until("caps")["caps"]["laptop_control"] is False
+    phone.send({"t": "input.click", "x": 0.1, "y": 0.1})
+    assert phone.until("error")["code"] == "not_allowed"
+
+
+def test_touchpad_moves_have_their_own_higher_limit(rig):
+    phone, ready, _offer = controllable(rig)
+    allow_control(rig, phone, ready["device"])
+    for _ in range(60):
+        phone.send({"t": "input.move", "dx": 1, "dy": 1})
+    phone.send({"t": "ping"})
+    assert phone.until("pong")["t"] == "pong"                     # no rate-limit error for normal touchpad use
+    assert len(rig.core.desktop.moves) == 60
