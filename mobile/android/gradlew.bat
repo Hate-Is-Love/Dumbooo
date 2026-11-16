@@ -36,6 +36,14 @@ for %%i in ("%APP_HOME%") do set APP_HOME=%%~fi
 @rem Add default JVM options here. You can also use JAVA_OPTS and GRADLE_OPTS to pass JVM options to this script.
 set DEFAULT_JVM_OPTS="-Xmx64m" "-Xms64m"
 
+@rem DUMBOO: Gradle 8.7 runs on JDK 17-21 (not newer). Use the JDK 21 in C:\final_deskbot_dumbo\tools if present.
+for /d %%J in ("%APP_HOME%\..\..\..\tools\jdk-21*") do set "JAVA_HOME=%%~fJ"
+@rem DUMBOO: Java on Windows fails ("Unable to establish loopback connection") when the temp folder's path has
+@rem spaces, e.g. C:\Users\FIRST LAST\AppData\Local\Temp. Give it a temp folder without spaces.
+set "DUMBOO_GRADLE_TMP=%PUBLIC%\dumboo-gradle-tmp"
+if not exist "%DUMBOO_GRADLE_TMP%" mkdir "%DUMBOO_GRADLE_TMP%"
+set "JAVA_TOOL_OPTIONS=-Djdk.net.unixdomain.tmpdir=%DUMBOO_GRADLE_TMP% -Djava.io.tmpdir=%DUMBOO_GRADLE_TMP% %JAVA_TOOL_OPTIONS%"
+
 @rem Find java.exe
 if defined JAVA_HOME goto findJavaFromJavaHome
 
