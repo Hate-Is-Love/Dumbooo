@@ -4,4 +4,9 @@
         <item name="android:statusBarColor">@color/background</item>
         <item name="android:navigationBarColor">@color/background</item>
     </style>
+    <!-- Invisible screens: Android's screen-sharing prompt and the share sheet target. -->
+    <style name="Theme.Dumboo.Invisible" parent="android:Theme.Translucent.NoTitleBar">
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:backgroundDimEnabled">false</item>
+    </style>
 </resources>

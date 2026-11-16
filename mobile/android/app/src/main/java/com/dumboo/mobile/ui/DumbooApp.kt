@@ -21,6 +21,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -345,7 +347,8 @@ private fun SettingsScreen(state: LinkState) {
     var speak by remember { mutableStateOf(Store.speakAnswers(context)) }
     var lock by remember { mutableStateOf(Store.appLock(context)) }
     var confirmUnpair by remember { mutableStateOf(false) }
-    Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Title("SETTINGS")
         if (laptop != null) {
             Text("Paired with ${laptop.laptopName} as ${laptop.userName}")
@@ -368,7 +371,8 @@ private fun SettingsScreen(state: LinkState) {
             Switch(checked = lock, onCheckedChange = { lock = it; Store.setAppLock(context, it) })
         }
         OutlinedButton(onClick = { Bridge.clearChat() }) { Text("CLEAR CHAT ON THIS PHONE") }
-        Spacer(Modifier.weight(1f))
+        PhoneSettings()
+        Spacer(Modifier.height(12.dp))
         if (!confirmUnpair) {
             OutlinedButton(onClick = { confirmUnpair = true }, modifier = Modifier.fillMaxWidth()) {
                 Text("UNPAIR THIS PHONE", color = Danger)

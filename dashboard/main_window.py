@@ -270,6 +270,7 @@ class MainWindow(QMainWindow):
         self._core = controller.core
         self._quitting = False
         self._told_about_tray = False
+        self._phone_panel = None
         self._state = self._core.state.state.value
         self.setWindowTitle("DUMBOO")
         self.setWindowIcon(make_icon())
@@ -389,6 +390,13 @@ class MainWindow(QMainWindow):
                 self._c.sleep("tray")
             else:
                 self._c.wake("tray")
+
+    def phone_panel(self):
+        if self._phone_panel is None:
+            from dashboard.widgets.phone_panel import PhonePanel
+
+            self._phone_panel = PhonePanel(self._c, self)
+        return self._phone_panel
 
     def notify(self, title: str, message: str) -> None:
         if self.tray is not None and self.tray.supportsMessages():
@@ -673,6 +681,30 @@ class MainWindow(QMainWindow):
                 self.notify("DUMBOO Mobile", text)
             else:
                 a.show_banner(f"📱 {payload.get('name', 'Your phone')} stopped viewing the screen", seconds=5)
+        elif name == Events.PHONE_PANEL:
+            self.phone_panel().open_tab(payload.get("tab") or "phone")
+        elif name == Events.PHONE_FRAME:
+            if self._phone_panel is not None and self._phone_panel.isVisible():
+                self._phone_panel.show_frame(payload["jpeg"])
+        elif name == Events.PHONE_NOTIFICATION:
+            if not payload.get("removed"):
+                text = f"📱 {payload.get('app', '')} · {payload.get('title', '')}: {payload.get('text', '')}"[:160]
+                a.show_banner(text, seconds=8)
+            if self._phone_panel is not None and self._phone_panel.isVisible():
+                self._phone_panel.refresh()
+        elif name == Events.PHONE_STATUS:
+            if self._phone_panel is not None and self._phone_panel.isVisible():
+                self._phone_panel.refresh()
+        elif name == Events.PHONE_CLIPBOARD:
+            a.show_banner("📋 Your phone's clipboard is on the laptop · press Ctrl+V to paste", seconds=6)
+            if self._phone_panel is not None:
+                self._phone_panel.add_received("clipboard text")
+        elif name == Events.PHONE_FILE:
+            text = f"📥 {payload.get('file')} from your phone · saved in Downloads\\DUMBOO Mobile"
+            a.show_banner(text, seconds=10)
+            self.notify("DUMBOO Mobile", text)
+            if self._phone_panel is not None:
+                self._phone_panel.add_received(payload.get("file", "file"))
         elif name == Events.ERROR:
             if payload.get("source") != "assistant":  # AI errors are shown in the conversation with RETRY
                 a.show_banner(f"⚠  {payload.get('message', 'error')}", error=True)

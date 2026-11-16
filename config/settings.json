@@ -111,6 +111,7 @@
   },
   "bridge": {
     "enabled": false,
-    "port": 8765
+    "port": 8765,
+    "allow_public": false
   }
 }

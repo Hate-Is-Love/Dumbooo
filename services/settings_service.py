@@ -156,6 +156,7 @@ SCHEMA: dict[str, dict[str, Field]] = {
     "bridge": {
         "enabled": Field(bool),
         "port": Field(int, 1024, 65535),
+        "allow_public": Field(bool),
     },
     "research": {
         "web_provider": Field(str, choices=("auto", "tavily", "brave", "browser", "off")),

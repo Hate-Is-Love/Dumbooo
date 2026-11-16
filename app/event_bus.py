@@ -85,6 +85,12 @@ class Events:
     INTERRUPTION_DETECTED = "interruption"     # {"speech_ms": float}
 
     PHONE_CONTROL = "phone.control"            # {"device", "name", "what", "active"} a phone is controlling the laptop
+    PHONE_STATUS = "phone.status"              # {"device", "name", "features", "status"} what the phone shares
+    PHONE_NOTIFICATION = "phone.notification"  # {"device", "name", "key", "app", "title", "text", "can_reply", "removed"}
+    PHONE_CLIPBOARD = "phone.clipboard"        # {"device", "name", "text"} the phone sent its clipboard
+    PHONE_FILE = "phone.file"                  # {"device", "name", "file", "path", "size"} a file from the phone was saved
+    PHONE_PANEL = "phone.panel"                # {"tab"} open the laptop's phone panel ("screen", ...)
+    PHONE_FRAME = "phone.frame"                # {"device", "jpeg", "w", "h", "seq"} the phone's screen (Phase 4)
     REMINDER_DUE = "reminder.due"              # {"kind": "event"|"task", "event_id"|"task_id": int, "title", "starts_at", "missed"?}
     SETTINGS_CHANGED = "settings.changed"      # {"settings": dict, "changed": list[str]}
     ERROR = "error"                            # {"source": str, "message": str, "recoverable": bool}

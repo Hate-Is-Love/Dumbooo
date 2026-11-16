@@ -48,6 +48,17 @@ class MainActivity : FragmentActivity() {
         pairLink(intent)?.let { pendingPairLink.value = it }
     }
 
+    override fun onStart() {
+        super.onStart()
+        App.inForeground = true
+        Bridge.sendFeatures()          // permissions may have changed in the phone's settings
+    }
+
+    override fun onStop() {
+        App.inForeground = false
+        super.onStop()
+    }
+
     override fun onDestroy() {
         speaker.shutdown()
         super.onDestroy()

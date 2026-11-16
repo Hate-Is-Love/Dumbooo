@@ -15,7 +15,8 @@ AUTH_TIMEOUT_S = 10.0
 RATE_WINDOW_S = 10.0
 RATE_MAX_MESSAGES = 20
 INPUT_RATE_MAX = 400          # touchpad moves, clicks, keys and screen acks: per RATE_WINDOW_S
-INPUT_TYPES = frozenset({"input.click", "input.move", "input.scroll", "input.key", "input.text", "screen.ack"})
+INPUT_TYPES = frozenset({"input.click", "input.move", "input.scroll", "input.key", "input.text", "screen.ack",
+                         "phone.frame", "file.chunk", "phone.notification", "phone.status", "phone.result"})
 MAX_SCREEN_FPS = 8
 MAX_TEXT = 2000
 MAX_NAME = 60

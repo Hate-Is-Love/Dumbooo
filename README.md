@@ -1647,14 +1647,14 @@ Existing tasks are unchanged. As with every upgrade, a backup is written to `dat
 
 ## 22. DUMBOO Mobile (Android companion app)
 
-DUMBOO Mobile is a native Android app (Kotlin) that connects securely to DUMBOO on your laptop. It is built in
-phases. **Phase 1** (this version) lets you:
+DUMBOO Mobile is a native Android app (Kotlin) that connects securely to DUMBOO on your laptop. Version 1.0.0
+has all five phases:
 
-* talk to DUMBOO from your phone, by text or push-to-talk, with spoken answers;
-* see your tasks and upcoming events;
-* get DUMBOO's reminders as phone notifications.
-
-Controlling the laptop from the phone and the phone from the laptop come in later phases. The design and protocol
+* talk to DUMBOO from your phone, by text or push-to-talk, with spoken answers; tasks, events and reminders;
+* control the laptop from the phone: its screen, mouse, keyboard and DUMBOO's laptop commands (22.7);
+* control the phone from the laptop: calls, music, find my phone, notifications and replies, files, clipboard,
+  apps (22.8) and its screen (22.9);
+* use it from anywhere over Tailscale, with a security review (22.10). The design and protocol
 are in [docs/PHONE_BRIDGE.md](docs/PHONE_BRIDGE.md).
 
 ### 22.1 Pair your phone
@@ -1665,8 +1665,7 @@ are in [docs/PHONE_BRIDGE.md](docs/PHONE_BRIDGE.md).
    camera app.
 4. The first time, Windows asks whether to let DUMBOO accept connections. Allow it on **private networks**.
 
-The phone and laptop must be on the **same Wi-Fi** in Phase 1. To connect from anywhere, both devices will join a
-free Tailscale network in Phase 5. Then add the laptop's Tailscale address under **Settings → Laptop addresses**.
+Pair on the **same Wi-Fi**. To connect from anywhere afterwards, see 22.10 (Tailscale).
 
 ### 22.2 Using it
 
@@ -1717,6 +1716,7 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 In `config/settings.json`, section `bridge`:
 * `enabled`: off until you pair a phone.
 * `port`: 8765.
+* `allow_public`: false. The laptop accepts only private networks and Tailscale; change it only if you know why.
 
 Migration **v8** adds two tables:
 * `paired_devices`: each phone, its public key, its user and its capabilities;
@@ -1767,3 +1767,69 @@ It is **off for every phone** until you allow it.
 * Screen pictures are made only while **Show screen** is on, and are never saved.
 * The account also needs the `automation.input` permission (the owner has it).
 * Touchpad movements have their own higher rate limit (400 per 10 s), so normal use is never blocked.
+
+### 22.8 Phase 3: control your phone from the laptop
+
+On the phone, open **Settings → What the laptop may do** and switch on what you want. Everything starts off, and
+the app asks for Android's permission where one is needed.
+
+| Say or type on the laptop | What the phone does | Feature |
+|---|---|---|
+| "find my phone" / "stop ringing" | Rings at full alarm volume, even on silent, for up to 90 s | Find my phone |
+| "call mom on my phone", "call +91 98765 43210" | Starts the call (finds the contact on the phone) | Calls |
+| "play lofi beats on my phone", "pause the music on my phone", "next song on my phone", "volume up on my phone" | Music and volume | Music |
+| "what's my phone's battery" | Battery, charging, network | (always) |
+| "read my phone notifications", "reply to Priya saying on my way" | Lists notifications and replies to messages | Notifications |
+| "send my clipboard to my phone", "copy hello to my phone" | Puts the text on the phone's clipboard | Clipboard |
+| "send report.pdf to my phone" | Sends a file from Desktop, Documents or Downloads | Files |
+| "open WhatsApp on my phone" | Opens the app | Open apps |
+| "show my phone's screen" | Opens the phone's screen on the laptop (Phase 4) | Screen |
+
+The same controls are buttons in the **phone panel**: ACCOUNT → Phone → **Open phone panel**. It has tabs for the
+phone, notifications, files and clipboard, and the screen.
+
+From the phone to the laptop:
+* **Settings → Send clipboard** puts the phone's copied text on the laptop's clipboard; press Ctrl+V there.
+* **Send a file**, or **Share → DUMBOO laptop** in any app (the app asks first), saves the file in the laptop's
+  `Downloads\DUMBOO Mobile`.
+* New notifications appear on the laptop for 8 seconds.
+
+Android blocks apps in the background from opening screens. To let calls, music and apps open without touching the
+phone, tap **Allow opening from the background** in Settings ("display over other apps"). Without it you get a
+notification to tap instead.
+
+### 22.9 Phase 4: see and control the phone's screen
+
+1. On the phone, switch on **Screen**, then tap **Open Accessibility settings** and turn on **DUMBOO screen
+   control**.
+2. On the laptop, say "show my phone's screen", or open the phone panel's **Screen** tab and click **Share phone
+   screen**.
+3. On the phone, accept Android's prompt. The screen appears on the laptop.
+4. Click to tap, drag to swipe, hold to long-press. Use the Back / Home / Recents buttons, and type into the
+   phone's text box.
+
+The phone shows a **STOP** notification all the time while it is shared. Taps only work while sharing is on, and
+Android asks again every time.
+
+### 22.10 Phase 5: use it from anywhere (Tailscale)
+
+1. Install **Tailscale** on the laptop and on the phone, and sign in to both with the same account.
+2. Find the laptop's address that starts with `100.` (Tailscale icon in the taskbar).
+3. In the app, open **Settings → Laptop addresses**, add that address after the home one and tap **Save &
+   reconnect**.
+
+Now the phone connects at home over Wi-Fi and anywhere else over Tailscale. Your router is never opened, and the
+laptop refuses connections from the public internet (`bridge.allow_public` is false). Full steps:
+[docs/PHONE_BRIDGE.md](docs/PHONE_BRIDGE.md#phase-5-from-anywhere-tailscale). The threat model, the findings and
+the accepted risks are in [docs/PHONE_SECURITY_REVIEW.md](docs/PHONE_SECURITY_REVIEW.md).
+
+### 22.11 Install the finished app
+
+1. Copy `DUMBOO-Mobile-1.0.0.apk` to the phone (USB, Google Drive or email to yourself), then open it.
+2. Android asks to allow installing from that app (Files, Drive or Chrome). Allow it, then tap **Install**. If
+   Play Protect warns about an unknown app, choose **Install anyway**: the APK is built from this repository and
+   isn't on the Play Store.
+3. Open DUMBOO Mobile. On the laptop, open ACCOUNT → Phone → **Pair a phone** and scan the code.
+4. On the phone, go to **Settings → What the laptop may do** and switch on what you want.
+
+Updating from 0.1/0.2 keeps the pairing, because the APK is signed with the same debug key on this PC.

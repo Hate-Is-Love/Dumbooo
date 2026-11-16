@@ -20,7 +20,11 @@ from ai.controller import ConversationController
 from app.event_bus import EventBus, Events
 from bridge.protocol import (MAX_SCREEN_FPS, MAX_VOICE_SECONDS, VOICE_RATES, ProtocolError, b64, b64decode,
                              text_field)
+from bridge.phone import PhoneState
 from bridge.remote import RemoteControl, RemoteError
+
+PHONE_EVENTS = {"status": Events.PHONE_STATUS, "notification": Events.PHONE_NOTIFICATION,
+                "clipboard": Events.PHONE_CLIPBOARD, "file": Events.PHONE_FILE}
 from services.schedule_service import ReminderService, reminder_speech
 
 log = logging.getLogger(__name__)
@@ -39,6 +43,9 @@ class PhoneLink:
         self._screen_thread: threading.Thread | None = None
         self._screen_acked = threading.Event()
         self._last_notice = 0.0
+        downloads = getattr(core, "phone_downloads", None) or (lambda: __import__("pathlib").Path.home() / "Downloads"
+                                                                / "DUMBOO Mobile")
+        self.phone = PhoneState(send, self._publish_phone, downloads)
         self.device = device
         self.session = session
         self._send = send
@@ -79,6 +86,10 @@ class PhoneLink:
             self._send(self.agenda())
         elif kind.startswith("input.") or kind.startswith("screen."):
             self._control(kind, msg)
+        elif kind == "phone.frame":
+            self._phone_frame(msg)
+        elif self.phone.handle(msg, self.device):
+            pass
         else:
             raise ProtocolError("unknown_type", f"unknown message type: {kind}")
 
@@ -86,6 +97,26 @@ class PhoneLink:
         if not self.device.can(capability):
             raise ProtocolError("not_allowed", f"This phone isn't allowed to use “{capability}”. Change it on the "
                                                "laptop: ACCOUNT → Phone.")
+
+    # -- what the phone shares (Phases 3-4) ----------------------------------------------------------------------
+    def _publish_phone(self, kind: str, payload: dict) -> None:
+        if kind == "clipboard":
+            try:
+                self._core.desktop.set_clipboard(payload["text"])   # the phone's clipboard, ready to paste
+            except Exception:
+                log.debug("Setting the laptop clipboard failed", exc_info=True)
+        self._core.bus.publish(PHONE_EVENTS[kind], payload)
+        if kind in ("file", "clipboard"):
+            self._core.devices.audit(f"phone_{kind}", self.device.id, self.device.user_id,
+                                     payload.get("file", "")[:100])
+
+    def _phone_frame(self, msg: dict) -> None:
+        if not self.phone.can("screen"):
+            raise ProtocolError("not_allowed", "Screen sharing is switched off on the phone.")
+        jpeg = b64decode(msg.get("img"), "img", 1_500_000)
+        self._send({"t": "phone.frame.ack", "seq": msg.get("seq")})
+        self._core.bus.publish(Events.PHONE_FRAME, {"device": self.device.id, "jpeg": jpeg, "seq": msg.get("seq"),
+                                                    "w": int(msg.get("w") or 0), "h": int(msg.get("h") or 0)})
 
     # -- laptop control (Phase 2) ---------------------------------------------------------------------------------
     def update_device(self, device) -> None:
@@ -277,6 +308,7 @@ class PhoneLink:
 
     # -- end ---------------------------------------------------------------------------------------------------
     def close(self) -> None:
+        self.phone.close()
         self._stop_screen()
         self._reminders.stop()
         self.conversation.cancel("phone disconnected")

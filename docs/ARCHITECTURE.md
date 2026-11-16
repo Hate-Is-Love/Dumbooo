@@ -391,7 +391,7 @@ system.
 ## Tasks, schedule and reminders by voice and text
 
 `AgendaAssistant` (`ai/agenda_assistant.py`) is one more hook in the conversation chain:
-Guardian → **Agenda** → Everyday → Research → Automation → Memory.
+Guardian → PhoneAssistant → **Agenda** → Everyday → Research → Automation → Memory.
 
 **How a message is handled:**
 1. The text is first rewritten by `ai/agenda_slang.normalize` (slang, text-speak, Hinglish).
@@ -455,3 +455,16 @@ Full design: [PHONE_BRIDGE.md](PHONE_BRIDGE.md).
   * `ConnectionService.kt`: foreground service and reminder notifications.
   * `Voice.kt`: push-to-talk at 16 kHz PCM, and phone TTS.
   * `MainActivity.kt` (app lock, deep link) and `ui/DumbooApp.kt` (screens).
+  * Phases 3-4: `PhoneControl.kt` (`Features`, the feature switches, and the command runner), `NotificationService.kt`
+    (notification listener, replies through `RemoteInput`), `FileTransfer.kt`, `ShareActivity.kt` (share target,
+    asks first), `ScreenShare.kt` (MediaProjection, ack-paced JPEG frames), `ControlService.kt` (Accessibility
+    gestures, only while sharing) and `ui/PhoneSettings.kt`.
+* **Laptop → phone (Phases 3-4):** `bridge/phone.py` (`PhoneState`, one per link) sends `phone.cmd` and waits for
+  `phone.result`. It keeps the phone's features, status and the last 50 notifications (in memory only), and
+  receives and sends files. `PhoneBridge.phone_request / phone_send / send_file_to_phone` pick the signed-in user's
+  phone. `ai/phone_assistant.py` (`PhoneAssistant`, after Guardian in the chain) turns "… my phone" requests into
+  commands, and ignores messages that come from the phone itself. `dashboard/widgets/phone_panel.py` is the phone
+  panel: phone, notifications, files, screen. Events: `PHONE_STATUS`, `PHONE_NOTIFICATION`, `PHONE_CLIPBOARD`,
+  `PHONE_FILE`, `PHONE_FRAME`, `PHONE_PANEL`.
+* **Phase 5:** `PhoneBridge._address_allowed` refuses public addresses (private, loopback, link-local and Tailscale
+  ranges only) unless `bridge.allow_public` is set. See [PHONE_SECURITY_REVIEW.md](PHONE_SECURITY_REVIEW.md).

@@ -1,0 +1,227 @@
+"""DUMBOO Mobile Phases 3-4: the laptop controlling the phone (commands, "my phone" voice commands, notifications,
+files and clipboard both ways, the phone's screen) over real TLS WebSocket connections, with a fake phone."""
+
+import base64
+import queue
+import threading
+import time
+
+import pytest
+
+from app.event_bus import Events
+from tests.fakes import wait_for
+from tests.test_bridge import paired, rig  # noqa: F401  (fixture)
+
+ALL_FEATURES = {"notifications": True, "clipboard": True, "files": True, "calls": True, "music": True,
+                "find_phone": True, "open_apps": True, "screen": True}
+
+
+class ActivePhone:
+    """A paired phone that answers the laptop's phone.cmd on a background thread, like the app's service."""
+
+    def __init__(self, phone, answers=None):
+        self.phone = phone
+        self.cmds: list[dict] = []
+        self.inbox: "queue.Queue[dict]" = queue.Queue()
+        self.answers = answers or {}
+        self.files: dict[str, bytearray] = {}
+        self.names: dict[str, str] = {}
+        self._run = True
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def _loop(self):
+        while self._run:
+            try:
+                msg = self.phone.recv(timeout=0.2)
+            except TimeoutError:
+                continue
+            except Exception:
+                return
+            if msg["t"] == "phone.cmd":
+                self.cmds.append(msg)
+                if msg["id"]:
+                    ok, text, data = self.answers.get(msg["action"], (True, f"did {msg['action']}", {}))
+                    self.phone.send({"t": "phone.result", "id": msg["id"], "ok": ok, "message": text, "data": data})
+            elif msg["t"] == "file.begin":
+                self.files[msg["id"]] = bytearray()
+                self.names[msg["id"]] = msg["name"]
+            elif msg["t"] == "file.chunk":
+                self.files[msg["id"]] += base64.b64decode(msg["data"])
+            elif msg["t"] == "file.end":
+                self.phone.send({"t": "phone.result", "id": msg["reply"], "ok": True, "message": "Saved."})
+            else:
+                self.inbox.put(msg)
+
+    def until(self, kind, timeout=8):
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            msg = self.inbox.get(timeout=max(0.05, end - time.monotonic()))
+            if msg["t"] == kind:
+                return msg
+        raise AssertionError(f"no {kind}")
+
+    def stop(self):
+        self._run = False
+        self._thread.join(2)
+
+
+def active_phone(rig, features=ALL_FEATURES, answers=None, tmp=None):  # noqa: F811
+    if tmp is not None:
+        rig.core.phone_downloads = lambda: tmp
+    phone, ready, _offer = paired(rig)
+    phone.send({"t": "phone.features", "features": features})
+    phone.send({"t": "phone.status", "status": {"battery": 81, "charging": True, "model": "Pixel"}})
+
+    def ready_now():
+        link = rig.core.bridge.phone_for(rig.session)
+        return link is not None and link.phone.status.get("battery") == 81
+
+    assert wait_for(ready_now, 5)
+    return ActivePhone(phone, answers), ready
+
+
+def test_laptop_commands_reach_the_phone_and_switched_off_features_are_refused(rig):  # noqa: F811
+    from bridge.phone import PhoneError
+
+    active, _ready = active_phone(rig, features={**ALL_FEATURES, "calls": False})
+    try:
+        result = rig.core.bridge.phone_request(rig.session, "ring")
+        assert result["ok"] and active.cmds[-1]["action"] == "ring"
+        with pytest.raises(PhoneError, match="switched off"):
+            rig.core.bridge.phone_request(rig.session, "call", {"who": "Mom"})
+        assert all(c["action"] != "call" for c in active.cmds)
+        with pytest.raises(PhoneError, match="Unknown"):
+            rig.core.bridge.phone_request(rig.session, "factory_reset")
+        events = rig.rec.of(Events.PHONE_STATUS)
+        assert events and events[-1]["status"]["battery"] == 81
+    finally:
+        active.stop()
+
+
+def test_my_phone_voice_commands(rig):  # noqa: F811
+    active, _ready = active_phone(rig, answers={"status": (True, "", {"battery": 42, "charging": False}),
+                                                "call": (True, "Calling Mom…", {}),
+                                                "play": (True, "Playing lofi beats on YouTube Music", {})})
+    try:
+        assert "ringing" in rig.reply("find my phone")
+        assert active.cmds[-1]["action"] == "ring"
+        assert "42%" in rig.reply("what's my phone's battery")
+        assert "Calling Mom" in rig.reply("call mom on my phone")
+        assert active.cmds[-1]["args"] == {"who": "mom"}
+        rig.reply("call +91 98765 43210")
+        assert active.cmds[-1]["action"] == "dial" and active.cmds[-1]["args"]["who"] == "+919876543210"
+        assert "lofi" in rig.reply("play lofi beats on my phone")
+        rig.reply("pause the music on my phone")
+        assert active.cmds[-1]["args"] == {"key": "pause"}
+        rig.reply("open whatsapp on my phone")
+        assert active.cmds[-1]["action"] == "open_app" and active.cmds[-1]["args"] == {"name": "whatsapp"}
+        rig.reply("copy hello there to my phone")
+        assert active.cmds[-1]["action"] == "clipboard.set" and active.cmds[-1]["args"]["text"] == "hello there"
+        ready = rig.say("next song on my phone")
+        assert ready.get("local") and active.cmds[-1]["args"] == {"key": "next"}   # handled here, not by the AI
+    finally:
+        active.stop()
+
+
+def test_notifications_are_listed_and_answered(rig):  # noqa: F811
+    active, _ready = active_phone(rig)
+    try:
+        active.phone.send({"t": "phone.notification", "key": "k1", "app": "WhatsApp", "title": "Priya",
+                           "text": "Lunch at 1?", "can_reply": True})
+        active.phone.send({"t": "phone.notification", "key": "k2", "app": "Gmail", "title": "Bank",
+                           "text": "Statement ready", "can_reply": False})
+        assert wait_for(lambda: len(rig.rec.of(Events.PHONE_NOTIFICATION)) == 2, 5)
+        text = rig.reply("read my phone notifications")
+        assert "Priya" in text and "Bank" in text
+        assert "Replied to Priya" in rig.reply("reply to priya saying yes see you then")
+        assert active.cmds[-1]["action"] == "reply"
+        assert active.cmds[-1]["args"] == {"key": "k1", "text": "yes see you then"}
+        assert "couldn't find" in rig.reply("reply to bank saying thanks")    # Gmail offered no reply
+        active.phone.send({"t": "phone.notification", "key": "k1", "removed": True})
+        link = rig.core.bridge.phone_for(rig.session)
+        assert wait_for(lambda: [n["key"] for n in link.phone.notifications] == ["k2"], 5)
+    finally:
+        active.stop()
+
+
+def test_files_and_clipboard_both_ways(rig, tmp_path):  # noqa: F811
+    active, _ready = active_phone(rig, tmp=tmp_path / "in")
+    try:
+        data = bytes(range(256)) * 3000                                   # 768 KB: two chunks
+        active.phone.send({"t": "file.begin", "id": "f1", "name": "../../evil/photo.jpg", "size": len(data)})
+        for i in range(0, len(data), 512 * 1024):
+            active.phone.send({"t": "file.chunk", "id": "f1",
+                               "data": base64.b64encode(data[i:i + 512 * 1024]).decode()})
+        active.phone.send({"t": "file.end", "id": "f1"})
+        saved = active.until("file.saved")
+        assert saved["name"] == "photo.jpg"
+        assert (tmp_path / "in" / "photo.jpg").read_bytes() == data       # the path in the name was ignored
+        assert not list((tmp_path / "in").glob("*.part"))
+        assert rig.rec.of(Events.PHONE_FILE)[-1]["file"] == "photo.jpg"
+
+        active.phone.send({"t": "clip.push", "text": "copied on the phone"})
+        assert wait_for(lambda: rig.core.desktop.get_clipboard() == "copied on the phone", 5)
+
+        out = tmp_path / "notes.txt"
+        out.write_bytes(b"x" * 600_000)
+        result = rig.core.bridge.send_file_to_phone(rig.session, out)
+        assert result["ok"]
+        (file_id,) = active.files
+        assert bytes(active.files[file_id]) == out.read_bytes() and active.names[file_id] == "notes.txt"
+
+        rig.core.desktop.set_clipboard("from the laptop")
+        assert "Sent the laptop's clipboard" in rig.reply("send my clipboard to my phone")
+        assert active.cmds[-1]["args"] == {"text": "from the laptop"}
+    finally:
+        active.stop()
+
+
+def test_a_file_bigger_than_announced_is_dropped(rig, tmp_path):  # noqa: F811
+    active, _ready = active_phone(rig, tmp=tmp_path / "in")
+    try:
+        active.phone.send({"t": "file.begin", "id": "f2", "name": "a.bin", "size": 10})
+        active.phone.send({"t": "file.chunk", "id": "f2", "data": base64.b64encode(b"y" * 20).decode()})
+        error = active.until("error")
+        assert error["code"] == "bad_request"
+        assert not list((tmp_path / "in").iterdir())
+    finally:
+        active.stop()
+
+
+def test_phone_screen_frames_reach_the_laptop_only_when_shared(rig):  # noqa: F811
+    active, _ready = active_phone(rig, features={**ALL_FEATURES, "screen": False})
+    try:
+        frame = base64.b64encode(b"\xff\xd8x").decode()
+        active.phone.send({"t": "phone.frame", "seq": 1, "w": 10, "h": 20, "img": frame})
+        assert active.until("error")["code"] == "not_allowed"
+        active.phone.send({"t": "phone.features", "features": ALL_FEATURES})
+        active.phone.send({"t": "phone.frame", "seq": 2, "w": 10, "h": 20, "img": frame})
+        assert active.until("phone.frame.ack")["seq"] == 2
+        assert rig.rec.of(Events.PHONE_FRAME)[-1]["jpeg"] == b"\xff\xd8x"
+        rig.core.bridge.phone_send(rig.session, "tap", {"x": 0.5, "y": 0.5})
+        assert wait_for(lambda: active.cmds and active.cmds[-1]["action"] == "tap", 5)
+    finally:
+        active.stop()
+
+
+def test_public_addresses_are_refused_unless_allowed(rig):  # noqa: F811
+    bridge = rig.core.bridge
+    assert bridge._address_allowed("192.168.1.20") and bridge._address_allowed("100.101.102.103")
+    assert bridge._address_allowed("127.0.0.1") and bridge._address_allowed("fd7a:115c:a1e0::1")
+    assert bridge._address_allowed("::ffff:10.0.0.4")
+    assert not bridge._address_allowed("8.8.8.8") and not bridge._address_allowed("2001:4860::1")
+    assert not bridge._address_allowed("not-an-ip")
+    rig.core.settings.update({"bridge": {"allow_public": True}})
+    assert bridge._address_allowed("8.8.8.8")
+
+
+def test_too_many_files_at_once_are_refused(rig, tmp_path):  # noqa: F811
+    active, _ready = active_phone(rig, tmp=tmp_path / "in")
+    try:
+        for i in range(4):
+            active.phone.send({"t": "file.begin", "id": f"m{i}", "name": f"{i}.bin", "size": 5})
+        active.phone.send({"t": "file.begin", "id": "m4", "name": "4.bin", "size": 5})
+        assert active.until("error")["code"] == "rate_limit"
+    finally:
+        active.stop()

@@ -53,10 +53,19 @@ class ConnectionService : Service() {
         }
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        when (intent?.action) {
+            ACTION_STOP_RING -> PhoneControl.stopRing(this)
+            ACTION_STOP_SCREEN -> ScreenShare.stop(this)
+        }
+        return START_STICKY
+    }
 
     override fun onDestroy() {
         scope.cancel()
+        PhoneControl.stopRing(this)
+        ScreenShare.stop(this)
+        FileTransfer.abortAll()
         Bridge.stop()
         super.onDestroy()
     }
@@ -96,6 +105,8 @@ class ConnectionService : Service() {
         private const val ONGOING_ID = 1
         const val CHANNEL_LINK = "link"
         const val CHANNEL_REMINDERS = "reminders"
+        const val ACTION_STOP_RING = "com.dumboo.mobile.STOP_RING"
+        const val ACTION_STOP_SCREEN = "com.dumboo.mobile.STOP_SCREEN"
 
         fun createChannels(context: Context) {
             val manager = context.getSystemService(NotificationManager::class.java)
@@ -103,6 +114,8 @@ class ConnectionService : Service() {
                 NotificationChannel(CHANNEL_LINK, "Connection", NotificationManager.IMPORTANCE_MIN))
             manager.createNotificationChannel(
                 NotificationChannel(CHANNEL_REMINDERS, "Reminders", NotificationManager.IMPORTANCE_HIGH))
+            manager.createNotificationChannel(NotificationChannel(PhoneControl.CHANNEL_ACTIONS,
+                "From the laptop (calls, find my phone, files, screen sharing)", NotificationManager.IMPORTANCE_HIGH))
         }
 
         fun start(context: Context) {

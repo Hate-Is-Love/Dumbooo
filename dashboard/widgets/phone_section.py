@@ -7,6 +7,7 @@ from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (QCheckBox, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget,
                                QListWidgetItem, QMessageBox, QPushButton)
 
+from app.event_bus import Events
 from dashboard.widgets.hud import HudPanel, hud_value
 
 
@@ -51,6 +52,10 @@ class PhoneSection(HudPanel):
         self.pair = QPushButton("◉  PAIR A PHONE")
         self.pair.setObjectName("Primary")
         self.pair.clicked.connect(self._pair)
+        self.panel = QPushButton("📱  OPEN PHONE PANEL")
+        self.panel.setToolTip("Control your phone from the laptop: ring it, music, calls, notifications, files, "
+                              "clipboard and its screen.")
+        self.panel.clicked.connect(lambda: self._c.core.bus.publish(Events.PHONE_PANEL, {"tab": "phone"}))
         self.devices = QListWidget()
         self.devices.setMaximumHeight(120)
         self.devices.currentItemChanged.connect(lambda *_: self._sync_control())
@@ -71,10 +76,11 @@ class PhoneSection(HudPanel):
         note = QLabel("Install DUMBOO Mobile on your Android phone, tap “Pair with laptop” and scan the code. Only a "
                       "phone that scans it can connect: the link is encrypted and locked to that phone's own key. "
                       "Remove a phone here to cut it off at once. Laptop control (screen, mouse, keyboard, commands) "
-                      "is off until you allow it for a phone; you'll see a notice whenever it's used.")
+                      "is off until you allow it for a phone; you'll see a notice whenever it's used. Away from home? Install "
+                      "Tailscale on both devices and add the laptop's 100.x address in the app (README 22.10).")
         note.setWordWrap(True)
         note.setObjectName("HudLabel")
-        for w in (self.status, self.qr, self.code, self.pair, self.devices, self.control):
+        for w in (self.status, self.qr, self.code, self.pair, self.panel, self.devices, self.control):
             self.body.addWidget(w)
         self.body.addLayout(row)
         self.body.addWidget(note)

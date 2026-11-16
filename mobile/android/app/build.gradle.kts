@@ -12,8 +12,8 @@ android {
         applicationId = "com.dumboo.mobile"
         minSdk = 26
         targetSdk = 34
-        versionCode = 2
-        versionName = "0.2.0 (Phase 2)"
+        versionCode = 5
+        versionName = "1.0.0"
     }
 
     buildTypes {

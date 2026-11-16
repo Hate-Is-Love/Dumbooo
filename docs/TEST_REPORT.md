@@ -709,3 +709,31 @@ keyboard, keys, shortcuts).
 Full suite: **794 passed**.
 
 **Not verified yet:** using all of this from a real phone.
+
+# DUMBOO Mobile, Phases 3-5: the phone from the laptop, anywhere (2026-11-16)
+
+`tests/test_phone_link.py` has 8 new tests. They use real TLS WebSocket connections and a fake phone that answers
+commands on its own thread, like the app's service:
+
+* **Commands and switches:** "ring" reaches the phone. A feature switched off on the phone (calls) is refused on
+  the laptop before anything is sent. Unknown actions are refused.
+* **"… my phone" commands:** find my phone, battery, call by name, dial a number, play, pause, next song, open an
+  app, and copy text to the phone are all handled locally, without the AI.
+* **Notifications:** they are listed, a reply goes to the right message, an app without reply is refused, and
+  removed notifications disappear.
+* **Files and clipboard both ways:** a 768 KB file arrives intact. A `../../evil/` path in its name is ignored, and
+  no `.part` file is left behind. A 600 KB file reaches the phone. Clipboard text goes both ways.
+* **Limits:** a file bigger than announced is dropped, and a fifth file at once is refused.
+* **Phone screen:** frames are refused while "screen" is off on the phone; once on, they are confirmed and
+  shown. Taps are sent.
+* **Public addresses:** refused, while private, Tailscale and IPv4-mapped addresses are allowed, unless
+  `allow_public` is set.
+
+The phone panel was rendered offscreen with a test frame. **Android:** 1.0.0 builds. Lint shows no errors, only
+library-update suggestions and two expected warnings (the pinned trust manager and notification shortcuts).
+A self-review found three issues, all fixed; see `docs/PHONE_SECURITY_REVIEW.md`.
+
+Full suite: **802 passed**.
+
+**Not verified yet:** any of this on a real phone (calls, notification access, screen sharing, Accessibility taps,
+Tailscale). These need the owner's phone.

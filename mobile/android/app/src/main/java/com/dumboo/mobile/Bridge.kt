@@ -24,6 +24,8 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONObject
+import kotlinx.coroutines.asCoroutineDispatcher
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 
@@ -86,6 +88,8 @@ object Bridge {
     val screen: StateFlow<ScreenFrame?> = _screen.asStateFlow()
     @Volatile private var screenWanted = false
     private var screenWidth = 1024
+    /** The laptop's commands to this phone run one at a time, in order (taps, swipes...). */
+    private val commands = CoroutineScope(SupervisorJob() + Executors.newSingleThreadExecutor().asCoroutineDispatcher())
 
     // -- connecting ---------------------------------------------------------------------------------------------
     fun start(context: Context) {
@@ -240,6 +244,8 @@ object Bridge {
                 _state.value = LinkState.Ready(user, host)
                 _laptopControl.value = msg.optJSONObject("caps")?.optBoolean("laptop_control") == true
                 requestAgenda()
+                sendFeatures()
+                sendStatus()
                 if (screenWanted && _laptopControl.value) startScreen(screenWidth)
             }
             "error" -> {
@@ -291,6 +297,22 @@ object Bridge {
             }
             "reminder" -> _reminders.tryEmit(Reminder(msg.optString("title"), msg.optString("text"),
                 msg.optBoolean("missed")))
+            // -- Phase 3-4: the laptop controlling this phone (each feature must be on in Settings) --
+            "phone.cmd" -> {
+                val context = appContext ?: return
+                val id = msg.optLong("id")
+                val action = msg.optString("action")
+                val args = msg.optJSONObject("args") ?: JSONObject()
+                commands.launch {
+                    val result = PhoneControl.run(context, action, args)
+                    if (id != 0L) sendResult(id, result)
+                }
+            }
+            "file.begin", "file.chunk", "file.end", "file.saved" -> {
+                val context = appContext ?: return
+                commands.launch { runCatching { FileTransfer.onMessage(context, msg) } }
+            }
+            "phone.frame.ack" -> ScreenShare.onAck()
         }
     }
 
@@ -397,6 +419,44 @@ object Bridge {
 
     fun type(text: String) {
         if (text.isNotEmpty()) control(JSONObject().put("t", "input.text").put("text", text.take(500)))
+    }
+
+    // -- this phone -> the laptop (Phases 3-4) -------------------------------------------------------------------
+    fun isReady(): Boolean = ready()
+
+    fun queueSize(): Long = socket?.queueSize() ?: 0L
+
+    fun send(msg: JSONObject) {
+        if (ready()) socket?.send(msg.toString())
+    }
+
+    fun sendResult(id: Long, result: CommandResult) = send(JSONObject().put("t", "phone.result").put("id", id)
+        .put("ok", result.ok).put("message", result.message).put("data", result.data))
+
+    /** Tells the laptop which features the owner switched on (and Android allows). */
+    fun sendFeatures() {
+        val context = appContext ?: return
+        send(JSONObject().put("t", "phone.features").put("features", Features.snapshot(context)))
+    }
+
+    fun sendStatus() {
+        val context = appContext ?: return
+        runCatching { send(JSONObject().put("t", "phone.status").put("status", PhoneControl.status(context))) }
+    }
+
+    fun sendNotification(note: JSONObject) = send(note.put("t", "phone.notification"))
+
+    fun sendFrame(jpeg: ByteArray, w: Int, h: Int, seq: Int) = send(JSONObject().put("t", "phone.frame")
+        .put("seq", seq).put("w", w).put("h", h).put("img", Base64.encodeToString(jpeg, Base64.NO_WRAP)))
+
+    /** “Send clipboard to laptop”: the text lands on the laptop's clipboard, ready for Ctrl+V. */
+    fun pushClipboard(text: String): String {
+        val context = appContext ?: return "Not connected."
+        if (!Features.usable(context, "clipboard")) return "Turn on “Clipboard” in Settings first."
+        if (!ready()) return "Not connected to the laptop."
+        if (text.isBlank()) return "The phone's clipboard is empty."
+        send(JSONObject().put("t", "clip.push").put("text", text.take(20000)))
+        return "Sent to the laptop's clipboard. Press Ctrl+V there."
     }
 
     private fun deviceName(): String =

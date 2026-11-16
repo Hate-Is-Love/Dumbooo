@@ -155,6 +155,11 @@ class PhoneBridge:
                 except Exception:
                     pass
 
+        remote_ip = connection.remote_address[0] if connection.remote_address else ""
+        if not self._address_allowed(remote_ip):
+            log.warning("Phone link: refused a connection from a public address")
+            connection.close(1008, "address")
+            return
         nonce = secrets.token_bytes(32)
         fingerprint = self.identity.fingerprint()
         send({"t": "hello", "v": P.VERSION, "nonce": P.b64(nonce)})
@@ -213,6 +218,20 @@ class PhoneBridge:
                 self._links[device.id] = [i for i in items if i[0] is not link]
             self.registry.audit("disconnected", device.id, device.user_id)
 
+    def _address_allowed(self, ip: str) -> bool:
+        """Only home/office networks, Tailscale and this PC, unless public addresses are explicitly allowed."""
+        if self._settings().get("allow_public"):
+            return True
+        try:
+            addr = ipaddress.ip_address(ip.split("%")[0])
+        except ValueError:
+            return False
+        if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped:
+            addr = addr.ipv4_mapped
+        return (addr.is_private or addr.is_loopback or addr.is_link_local
+                or addr in ipaddress.ip_network("100.64.0.0/10")              # Tailscale / CGNAT
+                or addr in ipaddress.ip_network("fd7a:115c:a1e0::/48"))     # Tailscale IPv6
+
     def _authenticate(self, connection, nonce: bytes, fingerprint: str):
         msg = P.parse(connection.recv(timeout=P.AUTH_TIMEOUT_S))
         if msg["t"] == "pair":
@@ -258,6 +277,37 @@ class PhoneBridge:
         with self._lock:
             links = [link for items in self._links.values() for link, _c in items]
         return any(link.session.token_hash == token and link.device.can("laptop_control") for link in links)
+
+    # -- laptop -> phone (Phases 3-4) ------------------------------------------------------------------------------
+    def phone_for(self, session):
+        """The most recently connected phone of the signed-in user, or None."""
+        user = self._core.auth.require(session)
+        with self._lock:
+            links = [link for items in self._links.values() for link, _c in items if link.device.user_id == user.id]
+        return links[-1] if links else None
+
+    def _phone(self, session):
+        from bridge.phone import PhoneError
+
+        link = self.phone_for(session)
+        if link is None:
+            raise PhoneError("Your phone isn't connected. Open DUMBOO Mobile on it (same Wi-Fi or Tailscale).")
+        return link
+
+    def phone_request(self, session, action: str, args: dict | None = None, timeout: float = 12.0) -> dict:
+        link = self._phone(session)
+        result = link.phone.request(action, args, timeout)
+        self.registry.audit("phone_command", link.device.id, link.device.user_id, action)
+        return result
+
+    def phone_send(self, session, action: str, args: dict | None = None) -> None:
+        self._phone(session).phone.send_nowait(action, args)
+
+    def send_file_to_phone(self, session, path) -> dict:
+        link = self._phone(session)
+        result = link.phone.send_file(path)
+        self.registry.audit("file_to_phone", link.device.id, link.device.user_id, str(path)[-100:])
+        return result
 
     def connected_devices(self) -> set[int]:
         with self._lock:

@@ -368,7 +368,12 @@ class AssistantCore:
 
         self.guardian = GuardianService(self.db, self.auth, self.guardian_config, self.paths.data_dir,
                                         **self._guardian_overrides)
-        self.guardian_assistant = GuardianAssistant(self.agenda_assistant, self.auth, self.guardian, self.profile,
+        from ai.phone_assistant import PhoneAssistant
+
+        # "… on my phone": call, music, find my phone, notifications, clipboard, files (DUMBOO Mobile).
+        self.phone_assistant = PhoneAssistant(self.agenda_assistant, self.auth, lambda: getattr(self, "bridge", None),
+                                              open_panel=lambda tab: self.bus.publish(Events.PHONE_PANEL, {"tab": tab}))
+        self.guardian_assistant = GuardianAssistant(self.phone_assistant, self.auth, self.guardian, self.profile,
                                                     generate=self._ai_generate)
         self.guardian_assistant.memory = self.memory
         self._build_bridge()

@@ -1,8 +1,8 @@
 # DUMBOO Mobile: phone bridge design
 
 DUMBOO Mobile is an Android app (Kotlin) that connects to DUMBOO on the laptop. This document describes the
-connection, the security model and the message protocol. It is built in phases; **Phase 1** (this version) covers
-pairing, talking to DUMBOO by text and voice, the agenda and reminders on the phone.
+connection, the security model and the message protocol. It was built in five phases; all five are in this
+version (app 1.0.0).
 
 | Phase | Adds |
 |---|---|
@@ -86,7 +86,13 @@ All frames are JSON text. `t` is the message type.
   `bridge/protocol.py` (messages and limits), `bridge/server.py` (WebSocket server, one handler per phone),
   `bridge/link.py` (one phone's conversation, voice, agenda and reminders), `dashboard/widgets/phone_section.py`.
 * Phone: `mobile/android/` (Kotlin, Jetpack Compose).
-* Tests: `tests/test_bridge.py` (real TLS WebSocket connections in-process; no phone needed).
+* Phases 3-4 (laptop): `bridge/phone.py` (commands to the phone, notifications, files), `ai/phone_assistant.py`
+  ("… my phone" commands), `dashboard/widgets/phone_panel.py` (the phone panel).
+* Phases 3-4 (phone): `PhoneControl.kt` (features and commands), `NotificationService.kt`, `FileTransfer.kt`,
+  `ShareActivity.kt`, `ScreenShare.kt` (screen sharing), `ControlService.kt` (Accessibility taps),
+  `ui/PhoneSettings.kt`.
+* Tests: `tests/test_bridge.py` and `tests/test_phone_link.py` (real TLS WebSocket connections in-process; no phone
+  needed).
 
 ## Phase 2: laptop control
 
@@ -112,3 +118,71 @@ The laptop publishes `PHONE_CONTROL` (banner and notification) and audits `remot
 in use, and also when the screen picture stops. The `input.*` and `screen.ack` messages have their own rate limit
 (400 per 10 s). Code: `bridge/remote.py` (screen frames with mss + OpenCV JPEG; input through the existing
 `automation/platform` desktop layer).
+
+## Phase 3: the laptop controls the phone
+
+The phone decides. Each feature is **off** until the owner switches it on in DUMBOO Mobile → Settings → *What the
+laptop may do*. Where Android has a permission, it is needed too:
+
+| Feature | Android permission |
+|---|---|
+| `notifications` | Notification access (phone settings) |
+| `calls` | Phone calls and contacts |
+| `clipboard`, `files`, `music`, `find_phone`, `open_apps` | none |
+| `screen` | screen-capture consent every time; Accessibility for taps |
+
+The phone reports what is usable (switched on **and** permitted), and the laptop refuses the rest before sending.
+The phone checks again before acting.
+
+| Direction | Message | Meaning |
+|---|---|---|
+| phone → laptop | `{"t":"phone.features","features":{"calls":true,...}}` | What the laptop may do now (sent on connect and on every change) |
+| phone → laptop | `{"t":"phone.status","status":{"battery":81,"charging":true,"network":"wifi","ringer":"normal","model":"..."}}` | Status |
+| laptop → phone | `{"t":"phone.cmd","id":7,"action":"call","args":{"who":"Mom"}}` | A command; `id` 0 means no answer is wanted (taps) |
+| phone → laptop | `{"t":"phone.result","id":7,"ok":true,"message":"Calling Mom…","data":{}}` | The answer |
+| phone → laptop | `{"t":"phone.notification","key":"...","app":"WhatsApp","title":"Priya","text":"...","can_reply":true}` | A notification; `"removed":true` when it goes away |
+| phone → laptop | `{"t":"clip.push","text":"..."}` | The phone's clipboard, placed on the laptop's clipboard |
+| both ways | `file.begin {id,name,size}` → `file.chunk {id,data}` × n → `file.end {id}` | A file, 512 KB per chunk, up to 50 MB. To the laptop it is answered with `file.saved`; to the phone `file.end` carries `reply` and is answered with `phone.result` |
+
+Actions: `call {who}`, `dial {who: number}`, `play {query}`, `media {key: play|pause|playpause|next|previous|stop}`,
+`volume {direction: up|down|mute|unmute}`, `ring`, `stop_ring`, `status`, `open_app {name}`, `clipboard.set {text}`,
+`reply {key,text}`, `dismiss {key}`, and for Phase 4 `screen.start`, `screen.stop`, `tap {x,y,long}`,
+`swipe {x1,y1,x2,y2,ms}`, `global {action: back|home|recents|notifications|quick_settings|lock}`, `type {text}`.
+
+On the laptop, `ai/phone_assistant.py` turns speech or typing into commands, for example "find my phone", "call mom
+on my phone", "play lofi on my phone", "what's my phone's battery", "read my phone notifications",
+"reply to Priya saying …", "send my clipboard to my phone", "send report.pdf to my phone", "open WhatsApp on my phone"
+and "show my phone's screen". The **phone panel** (ACCOUNT → Phone → Open phone panel) has the same controls as
+buttons. Received files go to `Downloads\DUMBOO Mobile`. Notifications are held only in memory (the last 50) and
+are never stored.
+
+## Phase 4: the phone's screen on the laptop
+
+`screen.start` opens Android's consent prompt on the phone. Then the phone sends
+`{"t":"phone.frame","seq":n,"w":720,"h":1600,"img":"<base64 JPEG>"}` about 6 times a second. Each frame waits for
+the laptop's `{"t":"phone.frame.ack","seq":n}`. On the laptop panel, a click is a tap, a drag is a swipe and holding
+is a long press. Back, Home, Recents, notifications and lock are buttons, and typing goes into the phone's
+focused text box. The Accessibility service only acts while the screen is being shared. The phone shows a STOP
+notification all the time.
+
+## Phase 5: from anywhere (Tailscale)
+
+DUMBOO never opens your router. To use the phone away from home, put both devices on a private **Tailscale**
+network (free for personal use). Traffic between them is end-to-end encrypted by WireGuard, and the DUMBOO link adds
+its own TLS and keys on top.
+
+1. Install **Tailscale** on the laptop (tailscale.com/download) and sign in.
+2. Install **Tailscale** on the phone (Play Store) and sign in with the **same account**.
+3. On the laptop, find its Tailscale address: click the Tailscale icon in the taskbar (it starts with `100.`), or
+   run `tailscale ip -4`.
+4. Pair at home as usual. If Tailscale was already running, the QR code includes the Tailscale address, and you
+   don't need step 5.
+5. Otherwise open DUMBOO Mobile → **Settings → Laptop addresses** and add the `100.x.y.z` address after the home
+   one, for example `192.168.1.20, 100.101.102.103`. Tap **Save & reconnect**.
+
+The app tries the addresses in order and remembers the one that worked. The laptop accepts connections only from
+private networks and Tailscale (`bridge.allow_public` is false). If the laptop's firewall prompt only allowed
+private networks, allow DUMBOO on the Tailscale network too: Windows treats it as a separate network.
+
+**Security review:** threat model, controls, findings and accepted risks are in
+[PHONE_SECURITY_REVIEW.md](PHONE_SECURITY_REVIEW.md).
