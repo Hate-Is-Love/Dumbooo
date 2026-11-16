@@ -153,6 +153,20 @@ def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+RECOVERY_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"   # no 0/O, 1/I
+
+
+def generate_recovery_code() -> str:
+    """16 characters from a 32-letter alphabet (80 bits), shown as XXXX-XXXX-XXXX-XXXX."""
+    raw = "".join(secrets.choice(RECOVERY_ALPHABET) for _ in range(16))
+    return "-".join(raw[i:i + 4] for i in range(0, 16, 4))
+
+
+def normalize_recovery_code(code: str) -> str:
+    cleaned = "".join(c for c in (code or "").upper() if c.isalnum())
+    return "-".join(cleaned[i:i + 4] for i in range(0, len(cleaned), 4))
+
+
 def generate_temporary_password(length: int = 14) -> str:
     alphabet = string.ascii_letters + string.digits
     while True:
@@ -583,6 +597,78 @@ class AuthService:
             "SELECT a.timestamp, a.action, actor.username AS actor, target.username AS target, a.metadata "
             "FROM admin_audit a LEFT JOIN users actor ON actor.id = a.actor_user_id "
             "LEFT JOIN users target ON target.id = a.target_user_id ORDER BY a.id DESC LIMIT ?", (limit,))
+
+    # -- password recovery --------------------------------------------------------------------------
+    def has_recovery_code(self, session: Session) -> bool:
+        user = self.require(session)
+        return bool(self._db.scalar("SELECT COUNT(*) FROM recovery_codes WHERE user_id = ?", (user.id,)))
+
+    def create_recovery_code(self, session: Session, password: str) -> str:
+        """A new recovery code for your own account (replaces the old one). Needs your password."""
+        user = self.require(session)
+        row = self._db.row("SELECT password_hash FROM users WHERE id = ?", (user.id,))
+        if not pw.verify(self._hasher, row["password_hash"], password):
+            raise InvalidCredentials("Password is incorrect.")
+        with self._db.transaction() as conn:
+            code = self._issue_recovery_code(conn, user.id)
+            self._audit(conn, user.id, "recovery_code_created", user.id)
+        return code
+
+    def _issue_recovery_code(self, conn: sqlite3.Connection, user_id: int) -> str:
+        code = generate_recovery_code()
+        conn.execute("INSERT INTO recovery_codes (user_id, code_hash, created_at) VALUES (?, ?, ?) "
+                     "ON CONFLICT(user_id) DO UPDATE SET code_hash = excluded.code_hash, "
+                     "created_at = excluded.created_at", (user_id, self._hasher.hash(code), self._iso()))
+        return code
+
+    def recover_with_code(self, username: str, code: str, new_password: str) -> str:
+        """Forgot password: set a new one with the recovery code. The code is used up and a new one is returned.
+
+        Counts as a sign-in attempt, so the normal lockout stops guessing. All sessions are signed out.
+        """
+        norm = pw.normalize_username(username)
+        code = normalize_recovery_code(code)
+        if not norm or not code:
+            raise InvalidCredentials("Enter your username and recovery code.")
+        remaining = self._lockout_remaining(norm)
+        if remaining:
+            raise AccountLocked(remaining)
+        user = self._db.row("SELECT u.id, u.username, u.status, r.code_hash FROM users u LEFT JOIN recovery_codes r "
+                            "ON r.user_id = u.id WHERE u.username_norm = ?", (norm,))
+        stored = user["code_hash"] if user and user["code_hash"] else self._dummy_hash
+        ok = pw.verify(self._hasher, stored, code) and user is not None and bool(user["code_hash"])
+        if not ok:
+            self._db.execute("INSERT INTO login_attempts (username_norm, success, attempted_at) VALUES (?, 0, ?)",
+                             (norm, self._iso()))
+            log.info("Failed password recovery attempt")
+            raise InvalidCredentials("That username and recovery code don't match.")
+        if user["status"] != "active":
+            raise AccountDisabled()
+        self._valid_password(new_password, user["username"])
+        return self._set_new_password(user["id"], new_password, "password_recovered")
+
+    def reset_password_locally(self, username: str, new_password: str) -> str:
+        """For tools/reset_password.py, run by hand on this PC (never reachable from the app or the phone)."""
+        user = self._db.row("SELECT id, username FROM users WHERE username_norm = ?",
+                            (pw.normalize_username(username),))
+        if user is None:
+            raise InvalidCredentials("No account with that username.")
+        self._valid_password(new_password, user["username"])
+        return self._set_new_password(user["id"], new_password, "password_reset_local")
+
+    def _set_new_password(self, user_id: int, new_password: str, action: str) -> str:
+        now = self._iso()
+        with self._db.transaction() as conn:
+            conn.execute("UPDATE users SET password_hash = ?, must_change_password = 0, password_changed_at = ?, "
+                         "updated_at = ? WHERE id = ?", (self._hasher.hash(new_password), now, now, user_id))
+            conn.execute("UPDATE user_sessions SET revoked_at = ?, revoke_reason = 'password recovered' "
+                         "WHERE user_id = ? AND revoked_at IS NULL", (now, user_id))
+            conn.execute("DELETE FROM login_attempts WHERE username_norm = (SELECT username_norm FROM users "
+                         "WHERE id = ?) AND success = 0", (user_id,))
+            code = self._issue_recovery_code(conn, user_id)
+            self._audit(conn, user_id, action, user_id)
+        log.info("Password reset (%s)", action)
+        return code
 
     # -- housekeeping -------------------------------------------------------------------------------
     def purge_old_attempts(self) -> int:

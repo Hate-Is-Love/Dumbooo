@@ -772,6 +772,30 @@ Normal users manage their own profile on **ACCOUNT**: display name, how DUMBOO
 addresses them, short or detailed answers, spoken answers on/off, password change,
 export of their own data, and sign-out.
 
+### 15.3a Forgot your password
+
+Nothing is lost when you reset a password: your tasks, history and memories stay. A reset signs out every session,
+including the phone (it reconnects by itself), and is written to the audit log.
+
+**With a recovery code (recommended):**
+1. Create a code on **ACCOUNT → Change password → Create recovery code** (needs your current password). Write it
+   down or save it in a password manager. Creating a new code replaces the old one.
+2. If you forget your password, click **Forgot password?** on the sign-in screen. Enter your username, the code
+   and a new password.
+3. The code is used up, and DUMBOO shows you a new one at once.
+
+Wrong codes count as failed sign-ins, so 5 wrong tries lock the account for 15 minutes.
+
+**Without a code, on this PC:** close DUMBOO, then double-click **`reset_password.bat`** in the DUMBOO folder (or
+run `python scripts/reset_password.py`). It lists the accounts and asks for the username and a new password, which
+is hidden as you type. Then it gives you a recovery code.
+
+This tool only works on this PC, from the Windows account that holds DUMBOO's data. Anyone with that Windows
+account can already read the data folder, so the tool doesn't weaken anything. It can't be used from the app,
+the phone or the network.
+
+Other users who forget their password: the owner can still use **RESET PASSWORD** on the Users page.
+
 ### 15.4 Conversation history
 
 * Every typed and spoken exchange is saved automatically under the signed-in
@@ -1825,7 +1849,7 @@ the accepted risks are in [docs/PHONE_SECURITY_REVIEW.md](docs/PHONE_SECURITY_RE
 
 ### 22.11 Install the finished app
 
-1. Copy `DUMBOO-Mobile-1.0.0.apk` to the phone (USB, Google Drive or email to yourself), then open it.
+1. Copy `DUMBOO-Mobile-1.1.0.apk` (or newer) to the phone (USB, Google Drive or email to yourself), then open it.
 2. Android asks to allow installing from that app (Files, Drive or Chrome). Allow it, then tap **Install**. If
    Play Protect warns about an unknown app, choose **Install anyway**: the APK is built from this repository and
    isn't on the Play Store.
@@ -1833,3 +1857,28 @@ the accepted risks are in [docs/PHONE_SECURITY_REVIEW.md](docs/PHONE_SECURITY_RE
 4. On the phone, go to **Settings → What the laptop may do** and switch on what you want.
 
 Updating from 0.1/0.2 keeps the pairing, because the APK is signed with the same debug key on this PC.
+
+### 22.12 Voice commands on the phone
+
+Hold the mic button in DUMBOO Mobile (or type) and say what you want the **phone** to do. You don't need to say
+"on my phone":
+
+| Say on the phone | What happens |
+|---|---|
+| "call mom", "call +91 98765 43210" | Calls (without the Calls permission, the dialer opens with the number) |
+| "play Arijit Singh", "pause", "next song", "volume up", "mute" | Music and volume |
+| "open WhatsApp", "open camera" | Opens the app (if no phone app has that name, the request goes to the laptop) |
+| "set an alarm for 6:30 am", "wake me up at 7", "set a timer for 10 minutes" | The clock app sets it |
+| "turn on the torch" / "turn off the flashlight" | Torch |
+| "navigate to the airport" | Google Maps directions |
+| "search YouTube for lofi" | YouTube search |
+| "text Mom saying I'm on my way" | Opens a text with the message filled in; you tap **Send** |
+
+* Anything that names the laptop ("pause the music on my laptop") goes to the laptop. So does anything that isn't
+  a phone command: questions, tasks, research.
+* The same new actions work from the laptop with "… on my phone", for example "set an alarm on my phone for 7 am".
+  Those need **Open apps** (alarms, timers, torch, maps, YouTube) or **Calls** (texts) switched on in the app.
+* *What the laptop may do* limits the laptop, not you. Your own requests on the phone don't need those switches.
+  The phone accepts them only within 90 seconds of you speaking or typing in the app. Android's own permissions
+  still apply.
+

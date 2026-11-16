@@ -225,3 +225,47 @@ def test_too_many_files_at_once_are_refused(rig, tmp_path):  # noqa: F811
         assert active.until("error")["code"] == "rate_limit"
     finally:
         active.stop()
+
+
+def test_commands_spoken_on_the_phone_act_on_that_phone(rig):  # noqa: F811
+    # "What the laptop may do" switches are all off: the owner's own requests on the phone still work.
+    off = {k: False for k in ALL_FEATURES}
+    active, _ready = active_phone(rig, features=off, answers={
+        "open_app": (False, "No app called “notepad please” on the phone.", {}),
+        "call": (True, "Calling Mom…", {})})
+    try:
+        active.phone.send({"t": "chat", "id": 1, "text": "call mom"})
+        assert "Calling Mom" in active.until("answer")["text"]
+        cmd = active.cmds[-1]
+        assert cmd["action"] == "call" and cmd["args"] == {"who": "mom", "own": True}
+        active.phone.send({"t": "chat", "id": 2, "text": "set an alarm for 6:30 am"})
+        active.until("answer")
+        assert active.cmds[-1]["action"] == "alarm" and active.cmds[-1]["args"]["hour"] == 6
+        active.phone.send({"t": "chat", "id": 3, "text": "turn on the torch"})
+        active.until("answer")
+        assert active.cmds[-1]["args"] == {"on": True, "own": True}
+        # not a phone app -> it falls through to the laptop's chain (laptop control is off, so it's refused there)
+        active.phone.send({"t": "chat", "id": 4, "text": "open notepad please"})
+        assert "switched off" in active.until("answer", timeout=15)["text"]
+        # naming the laptop never goes to the phone
+        n = len(active.cmds)
+        active.phone.send({"t": "chat", "id": 5, "text": "pause the music on my laptop"})
+        active.until("answer", timeout=15)
+        assert len(active.cmds) == n
+        events = [r["event"] for r in rig.core.db.query("SELECT event FROM device_events")]
+        assert "phone_voice_command" in events
+    finally:
+        active.stop()
+
+
+def test_new_phone_actions_from_the_laptop_need_the_phone_switch(rig):  # noqa: F811
+    active, _ready = active_phone(rig, features={**ALL_FEATURES, "open_apps": False})
+    try:
+        assert "switched off" in rig.reply("set an alarm on my phone for 7 am")
+        active.phone.send({"t": "phone.features", "features": ALL_FEATURES})
+        assert wait_for(lambda: rig.core.bridge.phone_for(rig.session).phone.can("open_apps"), 5)
+        rig.reply("set a timer on my phone for 10 minutes")
+        assert active.cmds[-1]["action"] == "timer" and active.cmds[-1]["args"] == {"seconds": 600}
+        assert "own" not in active.cmds[-1]["args"]
+    finally:
+        active.stop()

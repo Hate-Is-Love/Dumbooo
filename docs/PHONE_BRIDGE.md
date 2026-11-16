@@ -148,6 +148,14 @@ Actions: `call {who}`, `dial {who: number}`, `play {query}`, `media {key: play|p
 `volume {direction: up|down|mute|unmute}`, `ring`, `stop_ring`, `status`, `open_app {name}`, `clipboard.set {text}`,
 `reply {key,text}`, `dismiss {key}`, and for Phase 4 `screen.start`, `screen.stop`, `tap {x,y,long}`,
 `swipe {x1,y1,x2,y2,ms}`, `global {action: back|home|recents|notifications|quick_settings|lock}`, `type {text}`.
+Since 1.1: `torch {on}`, `alarm {hour,minute}`, `timer {seconds}`, `navigate {place}`, `search {query,site}` (feature
+`open_apps`) and `sms {who,text}` (feature `calls`; it opens a pre-filled text and never sends silently).
+
+**Spoken on the phone, for the phone (1.1).** A chat or voice message from the phone that is a phone command
+("call mom", "set an alarm for 7") is sent back to **that** phone with `"own": true` in `args` (`PhoneAssistant
+._from_the_phone` → `PhoneBridge.own_phone_request`, audited as `phone_voice_command`). For the actions in
+`OWN_ACTIONS`, the phone skips the "what the laptop may do" switches only if its owner sent a message within the
+last 90 s. Text that names the laptop, and "open X" when the phone has no such app, go on to the laptop's chain.
 
 On the laptop, `ai/phone_assistant.py` turns speech or typing into commands, for example "find my phone", "call mom
 on my phone", "play lofi on my phone", "what's my phone's battery", "read my phone notifications",

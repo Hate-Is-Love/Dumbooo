@@ -737,3 +737,20 @@ Full suite: **802 passed**.
 
 **Not verified yet:** any of this on a real phone (calls, notification access, screen sharing, Accessibility taps,
 Tailscale). These need the owner's phone.
+
+# Password recovery and phone voice commands (2026-11-17)
+
+* `tests/test_password_recovery.py` (5 tests): the code format (no 0/O/1/I, normalises lower case and spaces);
+  creating a code needs the password; a code resets the password once, signs out every session, is replaced by a
+  new one and audited; guessing codes locks the account like wrong passwords; a missing code and an unknown user
+  give the same answer; the on-PC reset path. `scripts/reset_password.py` was run against a **copy** of the real
+  database: it listed the accounts and waited for the hidden password, and the real database wasn't touched.
+* `tests/test_phone_link.py` (+2): commands typed on the phone ("call mom", "set an alarm for 6:30 am", "turn on
+  the torch") reach that phone with `own` even with every laptop switch off, and are audited. "open notepad please"
+  falls through to the laptop when the phone has no such app. Text naming the laptop never goes to the phone. From
+  the laptop, the new actions still need the phone's switch.
+* **Build:** someone had regenerated the Android Gradle wrapper for Gradle 9.7.1, which AGP 8.5.2 and Kotlin 1.9.24
+  don't support, and that removed the JDK 21 and temp-folder fix. The 8.7 wrapper was restored (a backup of the 9.7.1
+  files was kept). App 1.1.0 builds from plain PowerShell.
+
+**Not verified yet:** these phone commands on a real phone.

@@ -300,6 +300,22 @@ class PhoneBridge:
         self.registry.audit("phone_command", link.device.id, link.device.user_id, action)
         return result
 
+    def link_for_session(self, session):
+        """The connected phone whose own session this is (a message spoken or typed on that phone), or None."""
+        token = getattr(session, "token", None)
+        with self._lock:
+            for items in self._links.values():
+                for link, _c in items:
+                    if token and getattr(link.session, "token", None) == token:
+                        return link
+        return None
+
+    def own_phone_request(self, link, action: str, args: dict | None = None, timeout: float = 12.0) -> dict:
+        """A command the owner gave on the phone, for that phone."""
+        result = link.phone.request(action, args, timeout, own=True)
+        self.registry.audit("phone_voice_command", link.device.id, link.device.user_id, action)
+        return result
+
     def phone_send(self, session, action: str, args: dict | None = None) -> None:
         self._phone(session).phone.send_nowait(action, args)
 

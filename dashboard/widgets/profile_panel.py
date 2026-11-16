@@ -12,7 +12,7 @@ from dashboard.styles import theme
 from dashboard.widgets.activity import ScanIndicator
 from dashboard.widgets.hud import HudPanel, hud_label, hud_value
 from dashboard.widgets.identity_scanner import IdentityScanner
-from dashboard.widgets.login_page import password_field
+from dashboard.widgets.login_page import password_field, show_recovery_code
 from dashboard.widgets.phone_section import PhoneSection
 from services.database_status import database_status
 
@@ -102,6 +102,18 @@ class ProfilePanel(QWidget):
         cform.addRow("Confirm", self.confirm)
         cform.addRow(change)
         cform.addRow(note)
+        recovery = QLabel("")
+        recovery.setWordWrap(True)
+        recovery.setObjectName("HudLabel")
+        self.recovery_state = recovery
+        self.recovery_pass = password_field("your password, to create a recovery code")
+        make_code = QPushButton("CREATE RECOVERY CODE")
+        make_code.setToolTip("A code that lets you set a new password from the sign-in screen if you forget it.")
+        make_code.clicked.connect(self._create_recovery_code)
+        cform.addRow(QLabel("Forgot-password recovery"))
+        cform.addRow(recovery)
+        cform.addRow(self.recovery_pass)
+        cform.addRow(make_code)
         password.body.addLayout(cform)
         grid.addWidget(password, 1, 0)
 
@@ -263,6 +275,7 @@ class ProfilePanel(QWidget):
         if session is None:
             return
         core = self._c.core
+        self._show_recovery_state()
 
         def load():
             user = self._auth.require(session)
@@ -319,6 +332,32 @@ class ProfilePanel(QWidget):
         self._c.track(self.activity, "RE-KEYING CREDENTIALS", lambda: self._auth.change_password(session, current, new),
                       lambda _r: self._note("Password changed. Other sessions were signed out."), self._error,
                       done_label="PASSWORD UPDATED")
+
+    def _show_recovery_state(self) -> None:
+        session = self._c.session
+        if session is None:
+            return
+        self._c.run_async(lambda: self._auth.has_recovery_code(session),
+                          lambda has: self.recovery_state.setText(
+                              "✓ You have a recovery code. Creating a new one replaces it." if has else
+                              "⚠ No recovery code yet. Create one now: without it, a forgotten password can only be "
+                              "reset with reset_password.bat on this PC."),
+                          on_error=lambda _m: None)
+
+    def _create_recovery_code(self) -> None:
+        session, password = self._c.session, self.recovery_pass.text()
+        self.recovery_pass.clear()
+        if not password:
+            self._error("Enter your password to create a recovery code.")
+            return
+
+        def shown(code: str) -> None:
+            show_recovery_code(self, code, "Your new recovery code:")
+            self._note("Recovery code created. Any older code no longer works.")
+            self._show_recovery_state()
+
+        self._c.track(self.activity, "MINTING RECOVERY CODE", lambda: self._auth.create_recovery_code(session, password),
+                      shown, self._error, done_label="CODE READY")
 
     def _export(self, path: str | None = None) -> None:
         if path is None:

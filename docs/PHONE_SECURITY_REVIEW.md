@@ -67,6 +67,10 @@ Issues found while reviewing the Phase 3–5 code. All are fixed in this version
 * **Opening screens from the background.** If the owner allows DUMBOO Mobile to "display over other apps", the
   laptop can start calls and open apps without a tap on the phone. Without it, each such request becomes a
   notification to tap.
+* **Owner commands on the phone (1.1).** Phone commands spoken in the app skip the "what the laptop may do"
+  switches. The phone allows this only for everyday actions (calls, music, apps, alarms, torch, maps, texts) and
+  only within 90 s of its owner sending a message. A compromised laptop could use that window to place a call or
+  open an app; texts are only pre-filled, never sent.
 * **Not independently audited.** There is no fuzzing yet, and real-device testing so far is by the owner only.
 
 ## Tests that cover this

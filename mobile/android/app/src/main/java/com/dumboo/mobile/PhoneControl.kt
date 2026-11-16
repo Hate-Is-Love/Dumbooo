@@ -21,7 +21,10 @@ import android.os.BatteryManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.provider.AlarmClock
 import android.provider.ContactsContract
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
 import android.provider.MediaStore
 import android.provider.Settings
 import android.view.KeyEvent
@@ -101,19 +104,47 @@ object PhoneControl {
         "ring" to "find_phone", "stop_ring" to "find_phone", "open_app" to "open_apps", "clipboard.set" to "clipboard",
         "reply" to "notifications", "dismiss" to "notifications", "screen.start" to "screen", "screen.stop" to "screen",
         "tap" to "screen", "swipe" to "screen", "global" to "screen", "type" to "screen",
+        "torch" to "open_apps", "alarm" to "open_apps", "timer" to "open_apps", "navigate" to "open_apps",
+        "search" to "open_apps", "sms" to "calls",
     )
+
+    /**
+     * Commands the owner just spoke or typed into DUMBOO Mobile, for this phone ("call mom", "set an alarm for 7").
+     * The "what the laptop may do" switches limit the laptop, not the owner, so these skip them, but only within
+     * 90 seconds of the owner sending a message from this phone. Android's own permissions still apply.
+     */
+    private val OWN = setOf("call", "dial", "play", "media", "volume", "open_app", "torch", "alarm", "timer",
+        "navigate", "search", "sms")
 
     fun run(context: Context, action: String, args: JSONObject): CommandResult {
         if (action == "status") return CommandResult(true, "", status(context))
         val feature = NEEDS[action] ?: return CommandResult(false, "This phone doesn't know “$action”.")
-        if (!Features.usable(context, feature)) {
+        val own = args.optBoolean("own") && action in OWN && Bridge.ownerAskedRecently()
+        if (!own && !Features.usable(context, feature)) {
             return CommandResult(false, "“${feature.replace('_', ' ')}” is switched off on the phone " +
                 "(DUMBOO Mobile → Settings → What the laptop may do).")
         }
         return try {
             when (action) {
-                "call" -> call(context, args.optString("who"))
-                "dial" -> dial(context, args.optString("who"), args.optString("who"))
+                "call" -> call(context, args.optString("who"), own)
+                "dial" -> dial(context, args.optString("who"), args.optString("who"), own)
+                "torch" -> torch(context, args.optBoolean("on"))
+                "alarm" -> launch(context, Intent(AlarmClock.ACTION_SET_ALARM)
+                    .putExtra(AlarmClock.EXTRA_HOUR, args.optInt("hour")).putExtra(AlarmClock.EXTRA_MINUTES, args.optInt("minute"))
+                    .putExtra(AlarmClock.EXTRA_MESSAGE, "DUMBOO").putExtra(AlarmClock.EXTRA_SKIP_UI, true),
+                    "Set an alarm", "Alarm set for %02d:%02d.".format(args.optInt("hour"), args.optInt("minute")))
+                "timer" -> launch(context, Intent(AlarmClock.ACTION_SET_TIMER)
+                    .putExtra(AlarmClock.EXTRA_LENGTH, args.optInt("seconds")).putExtra(AlarmClock.EXTRA_MESSAGE, "DUMBOO")
+                    .putExtra(AlarmClock.EXTRA_SKIP_UI, true), "Start a timer", "Timer started.")
+                "navigate" -> launch(context, Intent(Intent.ACTION_VIEW,
+                    Uri.parse("google.navigation:q=" + Uri.encode(args.optString("place")))).let {
+                        if (it.resolveActivity(context.packageManager) != null) it
+                        else Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=" + Uri.encode(args.optString("place"))))
+                    }, "Directions to ${args.optString("place")}", "Directions to ${args.optString("place")}.")
+                "search" -> launch(context, Intent(Intent.ACTION_VIEW, Uri.parse(
+                    "https://www.youtube.com/results?search_query=" + Uri.encode(args.optString("query")))),
+                    "Search YouTube", "Searching YouTube for ${args.optString("query")}.")
+                "sms" -> sms(context, args.optString("who"), args.optString("text"))
                 "play" -> play(context, args.optString("query"))
                 "media" -> media(context, args.optString("key"))
                 "volume" -> volume(context, args.optString("direction"))
@@ -185,21 +216,50 @@ object PhoneControl {
     }
 
     // -- calls -------------------------------------------------------------------------------------------------------
-    private fun call(context: Context, who: String): CommandResult {
+    private fun call(context: Context, who: String, own: Boolean = false): CommandResult {
         if (who.isBlank()) return CommandResult(false, "Who should I call?")
         if (!Features.granted(context, Manifest.permission.READ_CONTACTS)) {
             return CommandResult(false, "Allow DUMBOO Mobile to read contacts (Settings → Calls) to call by name.")
         }
         val (name, number) = findContact(context, who)
             ?: return CommandResult(false, "No contact called “$who” on the phone.")
-        return dial(context, number, name)
+        return dial(context, number, name, own)
     }
 
-    private fun dial(context: Context, number: String, name: String): CommandResult {
+    private fun dial(context: Context, number: String, name: String, own: Boolean = false): CommandResult {
         val clean = number.filter { it.isDigit() || it == '+' }
         if (clean.length < 3) return CommandResult(false, "That isn't a phone number.")
+        if (!Features.granted(context, Manifest.permission.CALL_PHONE)) {
+            if (!own) return CommandResult(false, "Allow phone calls for DUMBOO Mobile (Settings → Calls).")
+            return launch(context, Intent(Intent.ACTION_DIAL, Uri.fromParts("tel", clean, null)), "Call $name",
+                "Opened the dialer for $name: tap Call. (Switch on “Calls” in Settings to call straight away.)")
+        }
         val intent = Intent(Intent.ACTION_CALL, Uri.fromParts("tel", clean, null))
         return launch(context, intent, "Call $name", "Calling $name…")
+    }
+
+    /** Opens a text to the contact with the message filled in; the owner taps Send (nothing is sent silently). */
+    private fun sms(context: Context, who: String, text: String): CommandResult {
+        val digits = who.filter { it.isDigit() || it == '+' }
+        val (name, number) = if (digits.length >= 3 && digits.length >= who.count { !it.isWhitespace() } - 1) {
+            who to digits
+        } else {
+            if (!Features.granted(context, Manifest.permission.READ_CONTACTS)) {
+                return CommandResult(false, "Allow DUMBOO Mobile to read contacts (Settings → Calls) to text by name.")
+            }
+            findContact(context, who) ?: return CommandResult(false, "No contact called “$who” on the phone.")
+        }
+        val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:" + Uri.encode(number))).putExtra("sms_body", text)
+        return launch(context, intent, "Text $name", "Opened a text to $name with your message: tap Send.")
+    }
+
+    private fun torch(context: Context, on: Boolean): CommandResult {
+        val cameras = context.getSystemService(CameraManager::class.java)
+        val id = cameras.cameraIdList.firstOrNull {
+            cameras.getCameraCharacteristics(it).get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+        } ?: return CommandResult(false, "This phone has no torch.")
+        cameras.setTorchMode(id, on)
+        return CommandResult(true, if (on) "Torch on." else "Torch off.")
     }
 
     private fun findContact(context: Context, who: String): Pair<String, String>? {

@@ -9,8 +9,14 @@
 * Apps: "open WhatsApp on my phone"; screen: "show my phone screen" (opens the phone panel on the laptop)
 * Files: "send report.pdf to my phone" (from Desktop, Documents or Downloads)
 
-Everything needs the phone connected and the matching feature switched on in the app; DUMBOO says what's missing.
-Other messages pass through unchanged.
+* More: "turn on the torch", "set an alarm for 6:30 am", "set a timer for 10 minutes", "navigate to the airport",
+  "search YouTube for lofi", "text Mom saying I'm on my way" (each "… on my phone" from the laptop)
+
+From the laptop, everything needs the phone connected and the matching feature switched on in the app; DUMBOO says
+what's missing. Spoken or typed INTO the phone (push-to-talk in DUMBOO Mobile), the same commands work without
+"on my phone" and act on that phone: "call mom", "play Arijit Singh", "open WhatsApp", "set an alarm for 7". Anything
+that isn't a phone command (or names the laptop) passes through unchanged, so "open notepad" still reaches the laptop
+when the phone has no app with that name.
 """
 
 from __future__ import annotations
@@ -51,6 +57,23 @@ RE_OPEN = re.compile(rf"^(?:open|launch|start) (?P<app>.+?) on {_PHONE}$", re.I)
 RE_SCREEN = re.compile(rf"^(?:show|share|mirror|open)(?: me)? {_PHONE}(?:'s)? screen(?: on (?:the )?laptop)?$|"
                        rf"^control {_PHONE}$", re.I)
 RE_FILE = re.compile(rf"^send (?P<file>.+?) to {_PHONE}$", re.I)
+RE_ON_PHONE = re.compile(rf"{_ON}$", re.I)
+RE_LAPTOP = re.compile(r"\b(?:laptop|computer|pc|desktop|windows)\b", re.I)
+RE_TORCH = re.compile(r"^(?:turn |switch )?(?P<on>on|off) (?:the )?(?:torch|flash ?light)$|"
+                      r"^(?:turn |switch )?(?:the )?(?:torch|flash ?light) (?P<on2>on|off)$", re.I)
+RE_ALARM = re.compile(r"^(?:set (?:an |the |my )?alarm|wake me(?: up)?)(?: for| at)? (?P<h>\d{1,2})(?:[:.](?P<m>\d{2}))?"
+                      r"\s*(?P<ap>am|pm|a\.m\.?|p\.m\.?)?(?: tomorrow)?$", re.I)
+RE_TIMER = re.compile(r"^(?:set |start )?(?:a |the )?timer (?:for )?(?P<n>\d+|a|an|one|two|three|five|ten|fifteen|"
+                      r"twenty|thirty) ?(?P<u>seconds?|secs?|minutes?|mins?|hours?|hrs?)$|^(?:set |start )?(?:a )?"
+                      r"(?P<n2>\d+|a|an|one|two|three|five|ten|fifteen|twenty|thirty)[ -]"
+                      r"(?P<u2>second|sec|minute|min|hour|hr)s? timer$", re.I)
+RE_NAV = re.compile(r"^(?:navigate|get directions|directions|take me|drive me) to (?P<place>.+)$", re.I)
+RE_YT = re.compile(r"^search (?:on )?youtube for (?P<q>.+)$|^search (?:for )?(?P<q2>.+?) on youtube$", re.I)
+RE_SMS = re.compile(r"^(?:text|sms|send (?:a )?(?:text|message|sms) to|message) (?P<who>.+?) (?:saying|that|:)\s*"
+                    r"(?P<msg>.+)$", re.I)
+RE_OPEN_ANY = re.compile(r"^(?:open|launch|start) (?:the )?(?P<app>[\w .'&+-]{2,40}?)(?: app)?$", re.I)
+WORD_NUMBERS = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "five": 5, "ten": 10, "fifteen": 15, "twenty": 20,
+                "thirty": 30}
 
 
 def _clean(text: str) -> str:
@@ -81,6 +104,10 @@ class PhoneAssistant(ConversationHooks):
         return getattr(self._inner, name)
 
     def local_reply(self, scope: Any, text: str, source: str) -> LocalReply | None:
+        if isinstance(scope, Session) and source == "phone":
+            reply = self._from_the_phone(scope, _clean(text))
+            if reply is not None:
+                return reply
         if isinstance(scope, Session) and source != "phone":
             try:
                 reply = self._handle(scope, _clean(text))
@@ -96,6 +123,95 @@ class PhoneAssistant(ConversationHooks):
             if reply is not None:
                 return reply
         return self._inner.local_reply(scope, text, source)
+
+    # -- spoken or typed on the phone, for the phone ---------------------------------------------------------------
+    def _from_the_phone(self, scope: Session, t: str) -> LocalReply | None:
+        from bridge.phone import PhoneError
+
+        bridge = self._bridge()
+        link = bridge.link_for_session(scope) if bridge is not None and hasattr(bridge, "link_for_session") else None
+        if link is None or not link.phone.features or not t or RE_LAPTOP.search(t):
+            return None          # an older app, or meant for the laptop: the normal chain handles it
+        t = RE_ON_PHONE.sub("", t).strip()
+        command = self._phone_command(t, own=True)
+        if command is None:
+            return None
+        action, args, done = command
+        try:
+            result = bridge.own_phone_request(link, action, args)
+        except PhoneError as exc:
+            if action == "open_app" and "No app called" in exc.message:
+                return None      # "open notepad": not a phone app, so it's for the laptop
+            return LocalReply(f"📱 {exc.message}", speech=exc.message, kind="phone")
+        message = result.get("message") or done
+        return LocalReply(f"📱 {message}", speech=message, kind="phone")
+
+    @staticmethod
+    def _phone_command(t: str, own: bool) -> tuple[str, dict, str] | None:
+        """Phone actions in plain words (no "on my phone"). ``own``: said on the phone itself."""
+        m = RE_TORCH.match(t)
+        if m:
+            on = (m.group("on") or m.group("on2")).lower() == "on"
+            return "torch", {"on": on}, f"Torch {'on' if on else 'off'}."
+        m = RE_ALARM.match(t)
+        if m:
+            hour, minute = int(m.group("h")), int(m.group("m") or 0)
+            ap = (m.group("ap") or "").lower()[:1]
+            if ap == "p" and hour < 12:
+                hour += 12
+            if ap == "a" and hour == 12:
+                hour = 0
+            if hour > 23 or minute > 59:
+                return None
+            return "alarm", {"hour": hour, "minute": minute}, f"Alarm set for {hour:02d}:{minute:02d}."
+        m = RE_TIMER.match(t)
+        if m:
+            n, unit = (m.group("n") or m.group("n2")).lower(), (m.group("u") or m.group("u2")).lower()
+            count = int(n) if n.isdigit() else WORD_NUMBERS[n]
+            seconds = count * (3600 if unit.startswith("h") else 60 if unit.startswith("m") else 1)
+            if not 0 < seconds <= 24 * 3600:
+                return None
+            return "timer", {"seconds": seconds}, f"Timer set for {count} {unit}."
+        m = RE_NAV.match(t)
+        if m:
+            return "navigate", {"place": m.group("place")}, f"Directions to {m.group('place')}."
+        m = RE_YT.match(t)
+        if m:
+            q = m.group("q") or m.group("q2")
+            return "search", {"query": q, "site": "youtube"}, f"Searching YouTube for {q}."
+        m = RE_SMS.match(t)
+        if m:
+            return "sms", {"who": m.group("who"), "text": m.group("msg")[:1000]}, \
+                f"Opened a text to {m.group('who')}: tap Send on the phone."
+        if not own:
+            return None
+        m = RE_CALL.match(t)
+        if m:
+            who = re.sub(r"^(?:to\s+)?", "", m.group("who"), flags=re.I).strip()
+            number = re.sub(r"[\s-]", "", who)
+            if re.fullmatch(r"\+?\d{3,15}", number):
+                return "dial", {"who": number}, f"Calling {number}…"
+            return "call", {"who": who}, f"Calling {who}…"
+        m = RE_MEDIA.match(t + " on my phone") or RE_MEDIA.match(t)
+        if m:
+            verb = (m.group("verb") or m.group("verb2") or "").lower()
+            key = {"pause": "pause", "stop": "pause", "resume": "play", "play": "play", "skip": "next",
+                   "next": "next", "previous": "previous", "go back": "previous"}[verb]
+            return "media", {"key": key}, {"pause": "Paused.", "play": "Playing.", "next": "Next track.",
+                                           "previous": "Previous track."}[key]
+        m = RE_VOLUME.match(t) or RE_VOLUME.match(t + " on my phone")
+        if m:
+            direction = (m.group("dir") or m.group("dir2") or m.group("mute") or "").lower()
+            return "volume", {"direction": direction}, "Done."
+        if re.match(r"^(?:mute|unmute)(?: the)?(?: phone| sound)?$", t, re.I):
+            return "volume", {"direction": t.split()[0].lower()}, "Done."
+        m = re.match(r"^play (?P<what>.+)$", t, re.I)
+        if m:
+            return "play", {"query": m.group("what")}, f"Playing {m.group('what')}."
+        m = RE_OPEN_ANY.match(t)
+        if m:
+            return "open_app", {"name": m.group("app")}, f"Opened {m.group('app')}."
+        return None
 
     # -- helpers ---------------------------------------------------------------------------------------------------
     def _phone(self, scope):
@@ -197,6 +313,13 @@ class PhoneAssistant(ConversationHooks):
             self._do(scope, "volume", {"direction": direction})
             return self._ok({"up": "Volume up.", "down": "Volume down.", "mute": "Muted your phone.",
                              "unmute": "Unmuted your phone."}[direction])
+        on_phone = re.sub(rf"(?: on {_PHONE})", "", t, count=1, flags=re.I) if re.search(
+            rf" on {_PHONE}\b", t, re.I) else None
+        command = self._phone_command(on_phone.strip(), own=False) if on_phone else None
+        if command is not None:
+            action, args, done = command
+            result = self._do(scope, action, args)
+            return self._ok(result.get("message") or done)
         m = RE_FILE.match(t)
         if m and not re.match(r"^(?:my |the )?clipboard$", m.group("file"), re.I):
             path = self._find_file(m.group("file"))

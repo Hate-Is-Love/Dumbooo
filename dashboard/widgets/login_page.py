@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from PySide6.QtCore import QElapsedTimer, Qt, QTimer, Signal
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import (QCheckBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QStackedWidget,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QCheckBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
+                               QStackedWidget, QVBoxLayout, QWidget)
 
 from dashboard.styles import theme
 from dashboard.widgets.hud import HudPanel
@@ -31,6 +31,19 @@ def password_field(placeholder: str) -> QLineEdit:
     field.addAction(toggle, QLineEdit.ActionPosition.TrailingPosition)
     field.visibility_toggle = toggle  # for tests
     return field
+
+
+def show_recovery_code(parent, code: str, lead: str) -> None:
+    """Shows a recovery code once, selectable, with how to use it."""
+    box = QMessageBox(parent)
+    box.setWindowTitle("DUMBOO · recovery code")
+    box.setIcon(QMessageBox.Icon.Information)
+    box.setTextFormat(Qt.TextFormat.RichText)
+    box.setText(f"{lead}<br><br><span style='font-size:20px; font-family:monospace;'><b>{code}</b></span><br><br>"
+                "Write it down or save it in a password manager. It's shown only now. If you forget your "
+                "password, use “Forgot password?” with this code.")
+    box.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+    box.exec()
 
 
 class LoginPage(QWidget):
@@ -58,6 +71,7 @@ class LoginPage(QWidget):
         self.stack.addWidget(self._build_setup())     # 1
         self.stack.addWidget(self._build_register())  # 2
         self.stack.addWidget(self._build_change())    # 3
+        self.stack.addWidget(self._build_recover())   # 4
         panel.body.addWidget(self.stack)
         panel.body.addWidget(self.message)
         panel.body.addStretch(1)
@@ -101,6 +115,9 @@ class LoginPage(QWidget):
         self.register_link = QPushButton("Create an account")
         self.register_link.setFlat(True)
         self.register_link.clicked.connect(lambda: self._show(2))
+        self.forgot_link = QPushButton("Forgot password?")
+        self.forgot_link.setFlat(True)
+        self.forgot_link.clicked.connect(self._show_recover)
         form.addRow(title)
         form.addRow("Username", self.login_user)
         form.addRow("Password", self.login_pass)
@@ -108,7 +125,42 @@ class LoginPage(QWidget):
         form.addRow(self.login_button)
         form.addRow(self.face_button)
         form.addRow(self.face_cancel)
+        form.addRow(self.forgot_link)
         form.addRow(self.register_link)
+        return w
+
+    def _build_recover(self) -> QWidget:
+        w = QWidget()
+        form = QFormLayout(w)
+        title = QLabel("FORGOT PASSWORD")
+        title.setObjectName("Title")
+        intro = QLabel("Enter your recovery code (XXXX-XXXX-XXXX-XXXX) to choose a new password. You create it on "
+                       "the ACCOUNT page. No code? On this PC, double-click reset_password.bat in the DUMBOO folder. "
+                       "Nothing is deleted either way.")
+        intro.setWordWrap(True)
+        intro.setObjectName("HudLabel")
+        self.rec_user = QLineEdit()
+        self.rec_user.setMaxLength(32)
+        self.rec_code = QLineEdit()
+        self.rec_code.setPlaceholderText("XXXX-XXXX-XXXX-XXXX")
+        self.rec_code.setMaxLength(24)
+        self.rec_new = password_field("new password")
+        self.rec_confirm = password_field("repeat new password")
+        self.rec_confirm.returnPressed.connect(self._recover)
+        self.recover_button = QPushButton("SET NEW PASSWORD")
+        self.recover_button.setObjectName("Primary")
+        self.recover_button.clicked.connect(self._recover)
+        back = QPushButton("Back to sign in")
+        back.setFlat(True)
+        back.clicked.connect(lambda: self._show(0))
+        form.addRow(title)
+        form.addRow(intro)
+        form.addRow("Username", self.rec_user)
+        form.addRow("Recovery code", self.rec_code)
+        form.addRow("New password", self.rec_new)
+        form.addRow("Confirm", self.rec_confirm)
+        form.addRow(self.recover_button)
+        form.addRow(back)
         return w
 
     def _build_setup(self) -> QWidget:
@@ -313,6 +365,29 @@ class LoginPage(QWidget):
         self._start_scan("checking credentials")
         self._c.run_async(lambda: self._accounts.login(username, password, remember),
                           lambda _s: self._finish(self._granted),
+                          on_exception=lambda exc: self._finish(lambda: self._denied(exc)))
+
+    def _show_recover(self) -> None:
+        self.rec_user.setText(self.login_user.text().strip())
+        self._show(4)
+
+    def _recover(self) -> None:
+        if self.rec_new.text() != self.rec_confirm.text():
+            self._note("The new passwords do not match.", ok=False)
+            return
+        values = (self.rec_user.text().strip(), self.rec_code.text(), self.rec_new.text())
+        for field in (self.rec_code, self.rec_new, self.rec_confirm):
+            field.clear()
+        self._start_scan("checking recovery code")
+
+        def done(code: str) -> None:
+            self.scanner.set_mode("idle", "password changed")
+            self._show(0)
+            self.login_user.setText(values[0])
+            self._note("Password changed. Sign in with your new password.", ok=True)
+            show_recovery_code(self, code, "Your recovery code was used up. Here is your new one:")
+
+        self._c.run_async(lambda: self._auth.recover_with_code(*values), lambda code: self._finish(lambda: done(code)),
                           on_exception=lambda exc: self._finish(lambda: self._denied(exc)))
 
     def _setup(self) -> None:

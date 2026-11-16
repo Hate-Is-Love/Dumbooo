@@ -88,6 +88,9 @@ object Bridge {
     val screen: StateFlow<ScreenFrame?> = _screen.asStateFlow()
     @Volatile private var screenWanted = false
     private var screenWidth = 1024
+    @Volatile private var lastOwnerMessage = 0L
+    /** True for 90 s after the owner sent a message or a voice clip from this phone (see PhoneControl.OWN). */
+    fun ownerAskedRecently(): Boolean = System.currentTimeMillis() - lastOwnerMessage < 90_000
     /** The laptop's commands to this phone run one at a time, in order (taps, swipes...). */
     private val commands = CoroutineScope(SupervisorJob() + Executors.newSingleThreadExecutor().asCoroutineDispatcher())
 
@@ -361,6 +364,7 @@ object Bridge {
             upsertAnswer(id, "Not connected to the laptop right now.", pending = false, error = true)
             return
         }
+        lastOwnerMessage = System.currentTimeMillis()
         socket?.send(JSONObject().put("t", "chat").put("id", id).put("text", clean.take(2000)).toString())
     }
 
@@ -373,6 +377,7 @@ object Bridge {
             return
         }
         voiceIds += id
+        lastOwnerMessage = System.currentTimeMillis()
         socket?.send(JSONObject().put("t", "voice").put("id", id).put("rate", 16000)
             .put("pcm", Base64.encodeToString(pcm, Base64.NO_WRAP)).toString())
     }

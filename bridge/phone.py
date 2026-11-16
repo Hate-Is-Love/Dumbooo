@@ -32,8 +32,15 @@ ACTIONS = {
     "reply": "notifications", "dismiss": "notifications",
     "screen.start": "screen", "screen.stop": "screen",
     "tap": "screen", "swipe": "screen", "global": "screen", "type": "screen",
+    "torch": "open_apps", "alarm": "open_apps", "timer": "open_apps", "navigate": "open_apps", "search": "open_apps",
+    "sms": "calls",
     "status": None,
 }
+# Commands the owner speaks or types INTO the phone, for the phone itself ("call mom", "set an alarm for 7"). The
+# "what the laptop may do" switches limit the laptop, not the owner, so these skip them; the phone still checks that
+# its owner sent a message within the last 90 seconds, and Android's own permissions still apply.
+OWN_ACTIONS = frozenset({"call", "dial", "play", "media", "volume", "open_app", "torch", "alarm", "timer", "navigate",
+                         "search", "sms"})
 MEDIA_KEYS = ("play", "pause", "playpause", "next", "previous", "stop")
 GLOBAL_ACTIONS = ("back", "home", "recents", "notifications", "quick_settings", "lock")
 MAX_FILE_BYTES = 50 * 1024 * 1024
@@ -85,11 +92,14 @@ class PhoneState:
     def can(self, feature: str | None) -> bool:
         return feature is None or bool(self.features.get(feature))
 
-    def request(self, action: str, args: dict | None = None, timeout: float = 12.0) -> dict:
+    def request(self, action: str, args: dict | None = None, timeout: float = 12.0, own: bool = False) -> dict:
         if action not in ACTIONS:
             raise PhoneError(f"Unknown phone action: {action}")
         feature = ACTIONS[action]
-        if not self.can(feature):
+        own = own and action in OWN_ACTIONS
+        if own:
+            args = {**(args or {}), "own": True}
+        elif not self.can(feature):
             raise PhoneError(f"“{feature.replace('_', ' ')}” is switched off on your phone. Turn it on in DUMBOO "
                              "Mobile → Settings → What the laptop may do.")
         cmd_id = next(self._ids)

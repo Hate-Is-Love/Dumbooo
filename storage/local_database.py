@@ -434,8 +434,16 @@ V8_PHONE_BRIDGE: list[str] = [
     "CREATE INDEX idx_device_events_device ON device_events(device_id, at)",
 ]
 
+V9_RECOVERY_CODES: list[str] = [
+    """CREATE TABLE recovery_codes (
+        user_id    INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        code_hash  TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )""",
+]
+
 MIGRATIONS: list[str | list[str]] = [V1_TASKS_EVENTS, V2_ACCOUNTS_HISTORY_MEMORY, V3_AUTOMATION, V4_RESEARCH,
-                                     V5_FACE, V6_SECURITY, V7_TASK_REMINDERS, V8_PHONE_BRIDGE]
+                                     V5_FACE, V6_SECURITY, V7_TASK_REMINDERS, V8_PHONE_BRIDGE, V9_RECOVERY_CODES]
 OPTIONAL_FTS = {2: V2_FTS}  # version -> statements applied only if FTS5 is available
 
 SCHEMA_VERSION = len(MIGRATIONS)
