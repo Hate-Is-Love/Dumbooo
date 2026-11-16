@@ -630,3 +630,52 @@ New tests:
 Full suite: **778 passed**.
 
 Not verified live yet: the speed gain on the user's laptop, and face sign-in in different lighting over several days.
+
+---
+
+# DUMBOO Mobile, Phase 1 (2026-11-16)
+
+## Laptop side
+
+`tests/test_bridge.py` has 11 tests, all passing (5 runs in a row). They use real TLS WebSocket connections
+in-process; the test client behaves like the app: it pins the certificate and signs the challenge with an EC P-256
+key. They cover:
+
+* **Pairing:** the QR payload holds the addresses, port, fingerprint and code; a phone paired with that code can
+  reconnect later with its key alone.
+* **One-time codes:** a used code is refused, and 5 wrong codes close the pairing window.
+* **Impostors:** a different key claiming a paired phone is refused, a replayed (old) challenge is refused, and
+  failures are audited.
+* **Removal:** a removed phone is disconnected at once and has to pair again.
+* **Chat:** messages go through DUMBOO's commands (a task is saved) and the AI, and the laptop's own conversation is
+  untouched.
+* **Push-to-talk:** clips are transcribed on the laptop; a wrong sample rate is refused.
+* **Agenda and reminders:** the agenda reaches the phone, and laptop reminders are forwarded to it.
+* **Safety gates:** "open notepad" and "disable the startup entry …" from the phone are refused and nothing runs.
+* **Capabilities:** they are checked on the laptop.
+* **Sessions and limits:** the phone's session ends when it disconnects, and floods are limited.
+* **Off by default:** the link stays off until a phone is paired.
+
+**Bugs found while testing and fixed:**
+* When a phone disconnected, it was marked offline before its session was ended (a brief window where the session
+  still worked). The session is now ended first.
+* On Windows, a race in Python's TLS handling between TLS 1.3 session tickets and the first message sometimes left
+  both sides waiting. A thread dump showed both stuck in SSL reads. The server no longer sends session tickets
+  (`num_tickets = 0`); phones re-authenticate with their key anyway. The test that failed most of the time then
+  passed 8 of 8 runs.
+* `test_login_page_face_button…` read the latest sign-in event before the asynchronous bus had delivered it. It now
+  waits for the face event.
+
+Full suite: **789 passed**.
+
+## Android app
+
+* `mobile/android` builds with Gradle 8.7, AGP 8.5.2, Kotlin 1.9.24 and JDK 21: a debug APK of 10.8 MB, targeting
+  Android 14, with no compiler warnings.
+* The declared permissions were checked with `aapt2 dump badging`.
+
+## Not verified yet
+
+* The app on a real phone: pairing by QR, chat, push-to-talk, notifications, the app lock. No phone was connected,
+  and the emulator wasn't started because of the PC's memory use.
+* Connecting from outside the home network (Phase 5, Tailscale).

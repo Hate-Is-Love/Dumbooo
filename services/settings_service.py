@@ -153,6 +153,10 @@ SCHEMA: dict[str, dict[str, Field]] = {
         "scan_timeout_s": Field(NUM, 10, 600),
         "file_integrity_enabled": Field(bool),
     },
+    "bridge": {
+        "enabled": Field(bool),
+        "port": Field(int, 1024, 65535),
+    },
     "research": {
         "web_provider": Field(str, choices=("auto", "tavily", "brave", "browser", "off")),
         "news_provider": Field(str, choices=("auto", "tavily", "brave", "google_news", "off")),

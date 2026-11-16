@@ -85,8 +85,11 @@ class AssistantCore:
                  ai_provider_factory=None, password_hasher=None, token_store: TokenStore | None = None,
                  desktop=None, browser=None, uia=None, screen_capture=None, research_providers=None,
                  research_client=None, research_resolver=None, research_browser=None, weather_client=None, face_engine=None,
-                 camera_factory=None, guardian_overrides: dict | None = None) -> None:
+                 camera_factory=None, guardian_overrides: dict | None = None,
+                 bridge_overrides: dict | None = None) -> None:
         self.paths = paths.ensure()
+        self.ai_provider_factory = ai_provider_factory   # also used by each phone's own conversation
+        self._bridge_overrides = bridge_overrides or {}  # tests inject a temporary identity / addresses
         self.camera_factory = camera_factory  # tests inject a fake camera; None = the real webcam
         self._guardian_overrides = guardian_overrides or {}  # tests inject fake OS layers (no real system changes)
         self.environ = os.environ if environ is None else environ
@@ -202,6 +205,7 @@ class AssistantCore:
         self.lifecycle.register(self.automation)
         self.lifecycle.register(self.resource_alerts)
         self.lifecycle.register(self.research)
+        self.lifecycle.register(self.bridge)
         self.lifecycle.register(self.research_browser)
         self.lifecycle.register(self.tts)
         self.lifecycle.register(self.stt)
@@ -367,8 +371,29 @@ class AssistantCore:
         self.guardian_assistant = GuardianAssistant(self.agenda_assistant, self.auth, self.guardian, self.profile,
                                                     generate=self._ai_generate)
         self.guardian_assistant.memory = self.memory
+        self._build_bridge()
         self.bus.subscribe(Events.STOP_SPEAKING, lambda _n, p: self.guardian.cancel() if p.get("source") == "ui"
                            else None)
+
+    def _build_bridge(self) -> None:
+        """DUMBOO Mobile: the secure phone link (off until a phone is paired). See docs/PHONE_BRIDGE.md."""
+        from bridge.devices import DeviceRegistry
+        from bridge.identity import LaptopIdentity
+        from bridge.server import PhoneBridge
+
+        overrides = self._bridge_overrides
+        identity = LaptopIdentity(self.paths.data_dir / "bridge", **overrides.get("identity", {}))
+        self.devices = DeviceRegistry(self.db, self.auth)
+        self.bridge = PhoneBridge(self, lambda: self.settings.section("bridge"), identity, self.devices,
+                                  **overrides.get("bridge", {}))
+        # Until laptop control is switched on for a phone (Phase 2), phone messages can't run laptop actions.
+        self.automation_assistant.remote_allowed = self._phone_may_control
+        self.guardian_assistant.remote_allowed = self._phone_may_control
+        self.research_assistant.remote_allowed = self._phone_may_control
+
+    @staticmethod
+    def _phone_may_control(scope) -> bool:
+        return False
 
     def _greet(self, _name: str, payload: dict) -> None:
         """After any sign-in: greet the user (first time: DUMBOO introduces itself). ACCOUNT page can turn it off."""

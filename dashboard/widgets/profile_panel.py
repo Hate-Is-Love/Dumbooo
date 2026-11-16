@@ -13,6 +13,7 @@ from dashboard.widgets.activity import ScanIndicator
 from dashboard.widgets.hud import HudPanel, hud_label, hud_value
 from dashboard.widgets.identity_scanner import IdentityScanner
 from dashboard.widgets.login_page import password_field
+from dashboard.widgets.phone_section import PhoneSection
 from services.database_status import database_status
 
 
@@ -121,6 +122,8 @@ class ProfilePanel(QWidget):
         data.body.addStretch(1)
         grid.addWidget(data, 1, 1)
         grid.addWidget(self._build_face(), 0, 2, 2, 1)
+        self.phone = PhoneSection(controller)   # DUMBOO Mobile pairing
+        grid.addWidget(self.phone, 0, 3, 2, 1)
 
         self.status = QLabel("")
         self.status.setWordWrap(True)
@@ -267,6 +270,7 @@ class ProfilePanel(QWidget):
                     core.face.status(session))
 
         self._c.track(self.activity, "LOADING PROFILE", load, self._show, self._error, done_label="PROFILE LOADED")
+        self.phone.refresh()
 
     def _show(self, result) -> None:
         user, prefs, status, face = result

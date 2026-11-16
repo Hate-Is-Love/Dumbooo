@@ -408,8 +408,34 @@ V7_TASK_REMINDERS: list[str] = [
     "CREATE INDEX idx_tasks_remind ON tasks(user_id, remind_at)",
 ]
 
+# v8: DUMBOO Mobile. Each paired phone is bound to one user and identified by its Keystore public key; the
+# capabilities say what it may do. ``device_events`` is the audit log (pairing, connections, refusals, removal).
+V8_PHONE_BRIDGE: list[str] = [
+    """CREATE TABLE paired_devices (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name            TEXT NOT NULL,
+        public_key      TEXT NOT NULL,
+        key_fingerprint TEXT NOT NULL UNIQUE,
+        capabilities    TEXT NOT NULL DEFAULT '{}',
+        created_at      TEXT NOT NULL,
+        last_seen_at    TEXT,
+        revoked_at      TEXT
+    )""",
+    "CREATE INDEX idx_paired_devices_user ON paired_devices(user_id, revoked_at)",
+    """CREATE TABLE device_events (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        device_id  INTEGER REFERENCES paired_devices(id) ON DELETE CASCADE,
+        user_id    INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        event      TEXT NOT NULL,
+        detail     TEXT NOT NULL DEFAULT '',
+        at         TEXT NOT NULL
+    )""",
+    "CREATE INDEX idx_device_events_device ON device_events(device_id, at)",
+]
+
 MIGRATIONS: list[str | list[str]] = [V1_TASKS_EVENTS, V2_ACCOUNTS_HISTORY_MEMORY, V3_AUTOMATION, V4_RESEARCH,
-                                     V5_FACE, V6_SECURITY, V7_TASK_REMINDERS]
+                                     V5_FACE, V6_SECURITY, V7_TASK_REMINDERS, V8_PHONE_BRIDGE]
 OPTIONAL_FTS = {2: V2_FTS}  # version -> statements applied only if FTS5 is available
 
 SCHEMA_VERSION = len(MIGRATIONS)

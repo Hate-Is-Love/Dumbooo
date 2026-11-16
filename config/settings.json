@@ -108,5 +108,9 @@
     "advisory_feeds": true,
     "scan_timeout_s": 120,
     "file_integrity_enabled": true
+  },
+  "bridge": {
+    "enabled": false,
+    "port": 8765
   }
 }

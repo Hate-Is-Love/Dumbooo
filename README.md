@@ -8,7 +8,7 @@
 <img alt="Python 3.11" src="https://img.shields.io/badge/python-3.11-3776AB?logo=python&logoColor=white">
 <img alt="Windows 10/11" src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6?logo=windows&logoColor=white">
 <img alt="PySide6" src="https://img.shields.io/badge/UI-PySide6%20(Qt%206)-41CD52?logo=qt&logoColor=white">
-<img alt="Tests: 778 passing" src="https://img.shields.io/badge/tests-778%20passing-2ea44f?logo=pytest&logoColor=white">
+<img alt="Tests: 778 passing" src="https://img.shields.io/badge/tests-789%20passing-2ea44f?logo=pytest&logoColor=white">
 <img alt="Voice runs locally" src="https://img.shields.io/badge/voice-100%25%20local-0f8b9b">
 <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-yellow">
 </p>
@@ -37,6 +37,7 @@ news, laptop automation and security checks, in a sci-fi dashboard with a 3D voi
 | 🛡️ | **Security guardian** | Defender/firewall/update overview, startup-entry investigation (signature, SHA-256, publisher), suspicious-link checks, file integrity monitoring — read-only by default. |
 | 🔐 | **Accounts & privacy** | Owner and users, Argon2id passwords, **face unlock** with a liveness check, private history and long-term memory per user. Audio never leaves the PC. |
 | 🫧 | **Living interface** | Animated core that shows every state, and a 3D point-cloud blob that reacts to your voice and to DUMBOO’s own speech. |
+| 📱 | **DUMBOO Mobile** | Android companion app: pair with a QR code, talk to DUMBOO by text or push-to-talk, see your agenda and get reminders on your phone — encrypted and locked to your phone's own key. *(Phase 1 of 5)* |
 
 <table>
 <tr>
@@ -80,7 +81,7 @@ More in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and the illustrated [projec
 | Automation | uiautomation (Windows UI Automation) · mss · psutil · pypdf |
 | Security | argon2-cffi · Windows DPAPI · OpenCV (YuNet + SFace) face unlock · PowerShell/registry checks |
 | Storage | SQLite (WAL, FTS5) with versioned migrations and automatic backups |
-| Testing | pytest — 778 tests with fakes for microphone, speaker, camera, AI, web and system |
+| Testing | pytest — 789 tests with fakes for microphone, speaker, camera, AI, web and system |
 
 ## 🚀 Quick start
 
@@ -165,6 +166,7 @@ stops speaking. The sections below cover installation, every feature, settings, 
 19. [Face unlock and the welcome greeting](#19-face-unlock-and-the-welcome-greeting)
 20. [Security & privacy guardian (Module 7)](#20-security--privacy-guardian-module-7)
 21. [Tasks, schedule and reminders by voice and text](#21-tasks-schedule-and-reminders-by-voice-and-text)
+22. [DUMBOO Mobile (Android companion app)](#22-dumboo-mobile-android-companion-app)
 
 
 ## 1. Requirements
@@ -1639,3 +1641,100 @@ Existing tasks are unchanged. As with every upgrade, a backup is written to `dat
 * the AI reading unusual phrasings;
 * keeping each user's tasks private;
 * the task dialog.
+
+
+---
+
+## 22. DUMBOO Mobile (Android companion app)
+
+DUMBOO Mobile is a native Android app (Kotlin) that connects securely to DUMBOO on your laptop. It is built in
+phases. **Phase 1** (this version) lets you:
+
+* talk to DUMBOO from your phone, by text or push-to-talk, with spoken answers;
+* see your tasks and upcoming events;
+* get DUMBOO's reminders as phone notifications.
+
+Controlling the laptop from the phone and the phone from the laptop come in later phases. The design and protocol
+are in [docs/PHONE_BRIDGE.md](docs/PHONE_BRIDGE.md).
+
+### 22.1 Pair your phone
+
+1. Install the app on your phone (see 22.4).
+2. On the laptop, open **ACCOUNT → Phone** and click **Pair a phone**. A QR code appears for 2 minutes.
+3. In DUMBOO Mobile, tap **Scan QR code** and point the camera at it. You can also scan it with the normal
+   camera app.
+4. The first time, Windows asks whether to let DUMBOO accept connections. Allow it on **private networks**.
+
+The phone and laptop must be on the **same Wi-Fi** in Phase 1. To connect from anywhere, both devices will join a
+free Tailscale network in Phase 5. Then add the laptop's Tailscale address under **Settings → Laptop addresses**.
+
+### 22.2 Using it
+
+* **DUMBOO tab:** type a message, or **hold the mic button**, speak, and release.
+  * Everything works as on the laptop: "what's on my plate today", "add a task to …", "remind me in 10 minutes
+    to …", questions, research.
+  * The phone has its own conversation, so it never interrupts the laptop.
+* **Agenda tab:** your tasks (with due times and reminders) and the next 7 days of events.
+* **Settings:** laptop addresses, spoken answers on/off, app lock, unpair.
+* While the phone is connected, reminders that come due appear as phone notifications.
+
+### 22.3 Security
+
+| Protection | How |
+|---|---|
+| Pairing | One-time code in a QR code, valid for 2 minutes, 5 wrong tries close it, only while you have it open |
+| Phone identity | EC P-256 key created in the Android Keystore; it never leaves the phone and is never backed up |
+| Laptop identity | Self-signed certificate; the app trusts only its SHA-256 fingerprint from the QR code (certificate pinning) |
+| Every connection | TLS 1.2+ plus a signed random challenge, bound to the laptop's fingerprint |
+| Least privilege | Per-phone capabilities checked on the laptop; laptop control is **off** in Phase 1 |
+| Sessions | Each connection gets its own DUMBOO session for your account, ended when the phone disconnects |
+| Control | Remove a phone on ACCOUNT → Phone to disconnect it at once; every pairing, connection and refusal is logged |
+| On the phone | Optional fingerprint/face/PIN app lock; no plain-text traffic is allowed at all |
+| Limits | 2 MB per message, 20 s voice clips, 20 messages per 10 s, 10 s to authenticate |
+
+The link is **off by default**. It starts when you pair a phone, and **Turn phone link off** stops it.
+
+### 22.4 Build and install the app
+
+The app's source is in `mobile/android/`. It needs JDK 17 or 21 and the Android SDK (platform 34).
+
+```powershell
+cd mobile\android
+.\gradlew assembleDebug
+```
+
+The app is written to `mobile/android/app/build/outputs/apk/debug/app-debug.apk`. To install it:
+
+1. On the phone, enable **Developer options → USB debugging**.
+2. Connect the phone with a USB cable, then run:
+
+```powershell
+adb install -r app\build\outputs\apk\debug\app-debug.apk
+```
+
+### 22.5 Settings
+
+In `config/settings.json`, section `bridge`:
+* `enabled`: off until you pair a phone.
+* `port`: 8765.
+
+Migration **v8** adds two tables:
+* `paired_devices`: each phone, its public key, its user and its capabilities;
+* `device_events`: the audit log.
+
+### 22.6 Tests
+
+`tests/test_bridge.py` has 11 tests. They use real TLS WebSocket connections in-process, acting exactly like the
+app: they pin the certificate and sign the challenge with a phone-style key. They cover:
+
+* pairing and reconnecting;
+* one-time codes and the lock after wrong guesses;
+* impostor keys and replayed challenges;
+* removal;
+* chat through DUMBOO's commands and AI;
+* voice transcription;
+* the agenda and reminders;
+* laptop control staying blocked;
+* capability checks;
+* sessions ending on disconnect;
+* the flood limit.

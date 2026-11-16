@@ -17,4 +17,7 @@ pypdf>=5,<7                 # Module 4: read and summarise PDFs
 trafilatura>=2.0,<3         # Module 5: main-text extraction from web pages
 httpx>=0.27,<1               # Module 5: web requests (search providers, page reading)
 opencv-python-headless>=4.9,<5  # face unlock (YuNet + SFace); headless: no Qt clash with PySide6
+websockets>=13,<17          # DUMBOO Mobile: the phone link (TLS WebSocket server)
+cryptography>=42,<51        # DUMBOO Mobile: laptop certificate, phone key signatures
+qrcode>=7.4,<9              # DUMBOO Mobile: the pairing QR code
 pytest>=8,<9                # automated tests

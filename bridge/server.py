@@ -1,0 +1,239 @@
+"""The phone link server: TLS WebSocket, pairing and challenge-response authentication, one handler per phone.
+
+``PhoneBridge`` is what the rest of DUMBOO uses: start/stop (lifecycle), the pairing QR payload, the list of paired
+phones, removal, and forwarding the laptop's reminders to that user's phones.
+"""
+
+from __future__ import annotations
+
+import base64
+import ipaddress
+import json
+import logging
+import secrets
+import socket
+import threading
+import time
+from collections import deque
+from dataclasses import dataclass
+from typing import Callable
+
+from app.event_bus import Events
+from bridge import protocol as P
+from bridge.devices import DeviceRegistry
+from bridge.identity import LaptopIdentity
+from bridge.link import PhoneLink
+
+log = logging.getLogger(__name__)
+
+
+def local_addresses() -> list[str]:
+    """IPv4 addresses the phone can try: Wi-Fi/Ethernet first, then Tailscale (100.64.0.0/10)."""
+    import psutil
+
+    lan, tailnet = [], []
+    for _name, addrs in psutil.net_if_addrs().items():
+        for a in addrs:
+            if a.family != socket.AF_INET:
+                continue
+            ip = ipaddress.ip_address(a.address)
+            if ip.is_loopback or ip.is_link_local:
+                continue
+            (tailnet if ip in ipaddress.ip_network("100.64.0.0/10") else lan).append(a.address)
+    return lan + tailnet
+
+
+@dataclass
+class PairingOffer:
+    uri: str
+    code: str
+    expires_in_s: int
+    addresses: list[str]
+    port: int
+    fingerprint: str
+
+
+class PhoneBridge:
+    name = "bridge"
+
+    def __init__(self, core, settings: Callable[[], dict], identity: LaptopIdentity, registry: DeviceRegistry,
+                 addresses: Callable[[], list[str]] = local_addresses, host: str = "0.0.0.0") -> None:
+        self._core = core
+        self._settings = settings
+        self.identity = identity
+        self.registry = registry
+        self._addresses = addresses
+        self._host = host
+        self._server = None
+        self._thread: threading.Thread | None = None
+        self._links: dict[int, list] = {}          # device id -> [(link, connection)]
+        self._lock = threading.Lock()
+        self.last_error = ""
+        self.port = 0
+        registry.on_revoked = self._close_device
+        core.bus.subscribe(Events.REMINDER_DUE, self._forward_reminder)
+
+    # -- lifecycle ------------------------------------------------------------------------------------------------
+    @property
+    def running(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
+    def start(self) -> None:
+        if self.running or not self._settings().get("enabled"):
+            return
+        from websockets.sync.server import serve
+
+        try:
+            ctx = self.identity.server_context()
+            self._server = serve(self._handle, self._host, int(self._settings().get("port", 8765)), ssl=ctx,
+                                 max_size=P.MAX_FRAME_BYTES, compression=None, ping_interval=20, ping_timeout=20,
+                                 open_timeout=P.AUTH_TIMEOUT_S, server_header=None)
+        except OSError as exc:
+            self.last_error = f"could not listen on port {self._settings().get('port', 8765)}: {exc.strerror or exc}"
+            log.warning("Phone link not started: %s", self.last_error)
+            return
+        self.port = self._server.socket.getsockname()[1]
+        self.last_error = ""
+        self._thread = threading.Thread(target=self._server.serve_forever, name="PhoneBridge", daemon=True)
+        self._thread.start()
+        log.info("Phone link listening on port %s", self.port)
+
+    def stop(self) -> None:
+        if self._server is not None:
+            self._server.shutdown()
+        if self._thread is not None:
+            self._thread.join(timeout=3)
+        self._server = self._thread = None
+        with self._lock:
+            links = [item for items in self._links.values() for item in items]
+            self._links.clear()
+        for link, connection in links:
+            link.close()
+            try:
+                connection.close(1001, "DUMBOO is closing")
+            except Exception:
+                pass
+
+    def set_enabled(self, enabled: bool) -> None:
+        self._core.settings.update({"bridge": {"enabled": bool(enabled)}})
+        if enabled:
+            self.start()
+        else:
+            self.stop()
+
+    def status(self) -> dict:
+        with self._lock:
+            connected = {d: len(v) for d, v in self._links.items() if v}
+        return {"enabled": bool(self._settings().get("enabled")), "running": self.running, "port": self.port,
+                "addresses": self._addresses(), "connected": connected, "error": self.last_error}
+
+    # -- pairing --------------------------------------------------------------------------------------------------
+    def offer_pairing(self, session) -> PairingOffer:
+        if not self.running:
+            self.set_enabled(True)
+        if not self.running:
+            raise P.ProtocolError("not_running", self.last_error or "The phone link couldn't start.")
+        code = self.registry.start_pairing(session)
+        addresses = self._addresses()
+        fingerprint = self.identity.fingerprint()
+        data = {"v": P.VERSION, "h": addresses, "p": self.port, "fp": fingerprint, "c": code.code,
+                "n": socket.gethostname()[:40]}
+        uri = "dumboo://pair?d=" + base64.urlsafe_b64encode(json.dumps(data, separators=(",", ":")).encode()) \
+            .decode().rstrip("=")
+        return PairingOffer(uri, code.code, code.expires_in_s, addresses, self.port, fingerprint)
+
+    # -- one phone connection -------------------------------------------------------------------------------------------
+    def _handle(self, connection) -> None:
+        send_lock = threading.Lock()
+
+        def send(msg: dict) -> None:
+            with send_lock:
+                try:
+                    connection.send(P.dump(msg))
+                except Exception:
+                    pass
+
+        nonce = secrets.token_bytes(32)
+        fingerprint = self.identity.fingerprint()
+        send({"t": "hello", "v": P.VERSION, "nonce": P.b64(nonce)})
+        try:
+            device = self._authenticate(connection, nonce, fingerprint)
+        except P.ProtocolError as exc:
+            send({"t": "error", "code": exc.code, "message": exc.message})
+            connection.close(1008, exc.code)
+            return
+        except Exception:
+            connection.close(1008, "handshake")
+            return
+        try:
+            session = self._core.auth.login_verified(device.user_id, "phone")
+        except Exception as exc:
+            send({"t": "error", "code": "account", "message": getattr(exc, "user_message", "Account not available")})
+            connection.close(1008, "account")
+            return
+        link = PhoneLink(self._core, device, session, send)
+        with self._lock:
+            self._links.setdefault(device.id, []).append((link, connection))
+        self.registry.audit("connected", device.id, device.user_id, connection.remote_address[0]
+                            if connection.remote_address else "")
+        send({"t": "ready", "device": device.id, "user": session.display_name, "caps": device.capabilities})
+        recent: deque[float] = deque()
+        try:
+            for frame in connection:
+                now = time.monotonic()
+                while recent and now - recent[0] > P.RATE_WINDOW_S:
+                    recent.popleft()
+                recent.append(now)
+                if len(recent) > P.RATE_MAX_MESSAGES:
+                    send({"t": "error", "code": "rate_limit", "message": "Too many messages; slow down a little."})
+                    continue
+                try:
+                    link.handle(P.parse(frame))
+                except P.ProtocolError as exc:
+                    send({"t": "error", "code": exc.code, "message": exc.message})
+                except Exception:
+                    log.exception("Phone message failed")
+                    send({"t": "error", "code": "internal", "message": "Something went wrong on the laptop."})
+        except Exception:
+            log.debug("Phone connection ended", exc_info=True)
+        finally:
+            link.close()   # end the phone's session first, then stop reporting it as connected
+            with self._lock:
+                items = self._links.get(device.id, [])
+                self._links[device.id] = [i for i in items if i[0] is not link]
+            self.registry.audit("disconnected", device.id, device.user_id)
+
+    def _authenticate(self, connection, nonce: bytes, fingerprint: str):
+        msg = P.parse(connection.recv(timeout=P.AUTH_TIMEOUT_S))
+        if msg["t"] == "pair":
+            device = self.registry.pair(
+                P.text_field(msg, "code", 20), str(msg.get("name") or "Phone"),
+                P.b64decode(msg.get("pub"), "pub", 512), P.b64decode(msg.get("sig"), "sig", 256), nonce, fingerprint)
+            return device
+        if msg["t"] == "auth":
+            return self.registry.authenticate(msg.get("device"), P.b64decode(msg.get("sig"), "sig", 256), nonce,
+                                              fingerprint)
+        raise P.ProtocolError("bad_request", "expected pair or auth")
+
+    # -- reminders and removal ------------------------------------------------------------------------------------------
+    def _forward_reminder(self, _name: str, payload: dict) -> None:
+        """The laptop's reminder service fired for the signed-in user: tell that user's phones too."""
+        with self._lock:
+            links = [link for items in self._links.values() for link, _c in items]
+        for link in links:
+            if link.laptop_has_this_user():
+                link.push_reminder(payload)
+
+    def _close_device(self, device_id: int) -> None:
+        with self._lock:
+            items = self._links.pop(device_id, [])
+        for link, connection in items:
+            link.close()
+            try:
+                connection.close(1008, "removed")
+            except Exception:
+                pass
+
+    def connected_devices(self) -> set[int]:
+        with self._lock:
+            return {d for d, v in self._links.items() if v}

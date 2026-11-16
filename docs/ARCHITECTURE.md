@@ -422,3 +422,36 @@ Guardian → **Agenda** → Everyday → Research → Automation → Memory.
 **Dashboard:** local replies of kind task, schedule, agenda or reminder refresh the agenda panel
 and the open TASKS or SCHEDULE page. The TASKS table shows DUE (with time) and REMINDER, and the
 dialog can set both.
+
+## DUMBOO Mobile bridge (phone link)
+
+Full design: [PHONE_BRIDGE.md](PHONE_BRIDGE.md).
+
+* `bridge/identity.py`: the laptop's EC P-256 key and self-signed certificate. The key file's password is protected
+  with DPAPI. The phone pins the certificate's SHA-256 fingerprint.
+* `bridge/devices.py` (`DeviceRegistry`): handles pairing and paired phones.
+  * Pairing windows are 2 minutes long, with 40-bit one-time codes and at most 5 tries.
+  * Paired phones are stored in `paired_devices` (migration v8) with their public key, user and capabilities.
+  * Phones are verified with ECDSA over `DUMBOO-AUTH-v1|nonce|fingerprint`.
+  * Removal and the audit log (`device_events`) live here too.
+* `bridge/server.py` (`PhoneBridge`, lifecycle service `bridge`): a `websockets` sync server over TLS, with one
+  thread per phone.
+  * The handshake runs `hello` → `pair`/`auth` → `ready`.
+  * It enforces the rate limit, forwards the laptop's `REMINDER_DUE` to that user's phones, and closes removed
+    phones.
+* `bridge/link.py` (`PhoneLink`): one connected phone.
+  * It has its own `ConversationController` on a private event bus, with the same hook chain as the laptop, using a
+    session from `AuthService.login_verified(user, "phone")`.
+  * Push-to-talk clips are transcribed with the shared Whisper pool.
+  * It answers agenda requests, and runs its own `ReminderService` only while the laptop isn't signed in as that
+    user.
+* **Safety gates:** `AutomationAssistant`, `GuardianAssistant` and `ResearchAssistant` have a `remote_allowed`
+  check. For `source == "phone"` without laptop control, laptop actions are recognised and refused, and never run.
+* **Dashboard:** `dashboard/widgets/phone_section.py` on the ACCOUNT page handles QR pairing, the list of phones,
+  removal and switching the link on or off.
+* **Android** (`mobile/android`, Kotlin + Compose):
+  * `Security.kt`: Keystore key, `PinnedTrustManager`, QR parsing, storage.
+  * `Bridge.kt`: OkHttp WebSocket, protocol, reconnect with backoff, state flows.
+  * `ConnectionService.kt`: foreground service and reminder notifications.
+  * `Voice.kt`: push-to-talk at 16 kHz PCM, and phone TTS.
+  * `MainActivity.kt` (app lock, deep link) and `ui/DumbooApp.kt` (screens).

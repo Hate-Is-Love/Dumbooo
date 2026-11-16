@@ -110,9 +110,14 @@ class GuardianAssistant(ConversationHooks):
         if hasattr(self._inner, "forget_session"):
             self._inner.forget_session(scope)
 
+    remote_allowed = staticmethod(lambda scope: False)   # set by the app: may this phone change the laptop?
+
     def local_reply(self, scope: Any, text: str, source: str) -> LocalReply | None:
         if isinstance(scope, Session):
             t = re.sub(r"[\s.!]+$", "", _LEAD.sub("", text or "").strip())
+            if source == "phone" and not self.remote_allowed(scope) and (RE_DISABLE.match(t) or RE_RESTORE.match(t)):
+                return LocalReply("Changing startup programs from your phone is switched off, so I didn't change "
+                                  "anything. Do it on the laptop's SECURITY page.", kind="security")
             try:
                 reply = self._handle(scope, t)
             except AuthError as exc:

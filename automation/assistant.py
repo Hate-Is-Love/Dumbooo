@@ -50,6 +50,9 @@ AUTOMATION_NOTE = (
     "it as a direct command.")
 
 
+REMOTE_SOURCES = {"phone"}   # messages from DUMBOO Mobile
+
+
 class AutomationAssistant(ConversationHooks):
     def __init__(self, bus: EventBus, auth: AuthService, controller: AutomationController, planner: Planner,
                  memory_hooks: ConversationHooks, speak: Callable[[str], None] | None = None) -> None:
@@ -79,9 +82,14 @@ class AutomationAssistant(ConversationHooks):
         # The session is already revoked here, so its tasks are found by the session hash, not by validating it.
         self._controller.cancel_session(scope.token_hash, "signed out")
 
+    remote_allowed = staticmethod(lambda scope: False)   # set by the app: may this phone control the laptop?
+
     def local_reply(self, scope: Any, text: str, source: str) -> LocalReply | None:
         if not isinstance(scope, Session):
             return self._memory.local_reply(scope, text, source)
+        if source in REMOTE_SOURCES and not self.remote_allowed(scope):
+            refused = self._remote_refusal(scope, text)
+            return refused if refused is not None else self._memory.local_reply(scope, text, source)
         try:
             user = self._auth.require(scope)
         except AuthError:
@@ -98,6 +106,22 @@ class AutomationAssistant(ConversationHooks):
         if reply is not None:
             return reply
         return self._memory.local_reply(scope, text, source)
+
+    def _remote_refusal(self, scope: Session, text: str) -> LocalReply | None:
+        """A phone without laptop control: recognise laptop commands (nothing is run) and say why not."""
+        t = intents.clean(text)
+        try:
+            user = self._auth.require(scope)
+            ctx = self._ctx(scope, user)
+            is_command = (intents.is_stop(t) or bool(RESUME.match(t)) or bool(WORKFLOW.match(t))
+                          or intents.parse(t, ctx, []) is not None or intents.looks_like_automation(t))
+        except Exception:
+            is_command = intents.looks_like_automation(t)
+        if not is_command:
+            return None
+        return LocalReply("Controlling the laptop from your phone is switched off, so I didn't do that. It's coming "
+                          "in the next DUMBOO Mobile update, behind its own switch on the laptop's ACCOUNT page.",
+                          kind="automation")
 
     # -- routing ------------------------------------------------------------------------------
     def _ctx(self, session: Session, user) -> ExecContext:

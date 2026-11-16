@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import re
+import contextvars
 import threading
 from datetime import datetime
 from typing import Any, Callable
@@ -29,6 +30,9 @@ from research.result_formatter import format_speech, references
 from services.auth_service import AuthError, Session
 
 log = logging.getLogger(__name__)
+
+
+_SOURCE: contextvars.ContextVar[str] = contextvars.ContextVar("research_source", default="")
 
 
 class ResearchAssistant(ConversationHooks):
@@ -66,7 +70,10 @@ class ResearchAssistant(ConversationHooks):
         with self._lock:
             return self._last.get(session.token_hash)
 
+    remote_allowed = staticmethod(lambda scope: False)   # set by the app: may this phone control the laptop?
+
     def local_reply(self, scope: Any, text: str, source: str) -> LocalReply | None:
+        _SOURCE.set(source)
         if not isinstance(scope, Session):
             return self._inner.local_reply(scope, text, source)
         try:
@@ -295,8 +302,13 @@ class ResearchAssistant(ConversationHooks):
                 return turn.user
         return ""
 
+    def _remote_blocked(self, session: Session) -> bool:
+        return _SOURCE.get() == "phone" and not self.remote_allowed(session)
+
     def _open(self, session: Session, url: str, title: str) -> str:
         """Open a retrieved source in the user's browser through the automation controller (policy applies)."""
+        if self._remote_blocked(session):
+            return f"Opening pages on the laptop from your phone is switched off. The link: {url}"
         if self._automation is None:
             return f"Link: {url}"
         try:
@@ -328,6 +340,9 @@ class ResearchAssistant(ConversationHooks):
         return None
 
     def _export(self, session: Session, outcome: ResearchOutcome) -> LocalReply:
+        if self._remote_blocked(session):
+            return LocalReply("Saving files on the laptop from your phone is switched off, so I didn't export it.",
+                              kind="research")
         if self._automation is None:
             return LocalReply("Exporting needs the automation module.", kind="research")
         folder = self._export_folder()

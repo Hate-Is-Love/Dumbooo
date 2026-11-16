@@ -247,7 +247,8 @@ def test_login_page_face_button_signs_in_and_turns_the_camera_off(paths):
         page._face_login()
         assert wait_for(lambda: (app.processEvents(), r.core.accounts.signed_in)[1], 10)
         assert camera.released
-        assert r.rec.of(Events.USER_SIGNED_IN)[-1]["method"] == "face"
+        # the event bus is asynchronous: wait for the face sign-in event instead of reading the latest one at once
+        assert wait_for(lambda: any(e["method"] == "face" for e in r.rec.of(Events.USER_SIGNED_IN)), 5)
     finally:
         r.close()
 

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- No plain-text traffic at all. The laptop is trusted only through the certificate pin from the pairing QR
+     code (checked in PinnedTls.kt), never through the system certificate authorities. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+</network-security-config>
