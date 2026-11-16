@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -72,8 +73,17 @@ RE_YT = re.compile(r"^search (?:on )?youtube for (?P<q>.+)$|^search (?:for )?(?P
 RE_SMS = re.compile(r"^(?:text|sms|send (?:a )?(?:text|message|sms) to|message) (?P<who>.+?) (?:saying|that|:)\s*"
                     r"(?P<msg>.+)$", re.I)
 RE_OPEN_ANY = re.compile(r"^(?:open|launch|start) (?:the )?(?P<app>[\w .'&+-]{2,40}?)(?: app)?$", re.I)
+ORDINALS = {"first": 0, "one": 0, "1": 0, "1st": 0, "second": 1, "two": 1, "2": 1, "2nd": 1, "third": 2, "three": 2,
+            "3": 2, "3rd": 2, "fourth": 3, "four": 3, "4": 3, "4th": 3, "fifth": 4, "five": 4, "5": 4, "5th": 4,
+            "sixth": 5, "six": 5, "6": 5}
+CANCEL = re.compile(r"^(?:cancel|never ?mind|none|none of them|no|nothing|stop|forget it)$", re.I)
+CHOICE_TTL_S = 120
 WORD_NUMBERS = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "five": 5, "ten": 10, "fifteen": 15, "twenty": 20,
                 "thirty": 30}
+
+
+def _key(scope) -> str:
+    return getattr(scope, "token", None) or str(id(scope))
 
 
 def _clean(text: str) -> str:
@@ -82,11 +92,15 @@ def _clean(text: str) -> str:
 
 class PhoneAssistant(ConversationHooks):
     def __init__(self, inner: ConversationHooks, auth, bridge: Callable[[], Any],
-                 open_panel: Callable[[str], None] = lambda tab: None) -> None:
+                 open_panel: Callable[[str], None] = lambda tab: None,
+                 lookup: Callable[[str], str | None] = lambda query: None) -> None:
         self._inner = inner
         self._auth = auth
         self._bridge = bridge
         self._open_panel = open_panel
+        self._lookup = lookup                    # song -> YouTube video id, so the phone plays it directly
+        self._last: dict[str, tuple] = {}        # session -> the last phone command (for follow-up choices)
+        self._pending: dict[str, dict] = {}      # session -> a question with choices DUMBOO is waiting on
 
     def prompt_options(self, scope: Any) -> dict:
         return self._inner.prompt_options(scope)
@@ -94,16 +108,16 @@ class PhoneAssistant(ConversationHooks):
     def extra_context(self, scope: Any, text: str, seq: int) -> str:
         return self._inner.extra_context(scope, text, seq)
 
-    def forget_session(self, scope) -> None:
-        if hasattr(self._inner, "forget_session"):
-            self._inner.forget_session(scope)
-
     def __getattr__(self, name: str):
         if name.startswith("_"):
             raise AttributeError(name)
         return getattr(self._inner, name)
 
     def local_reply(self, scope: Any, text: str, source: str) -> LocalReply | None:
+        if isinstance(scope, Session):
+            reply = self._answer_choice(scope, text)
+            if reply is not None:
+                return reply
         if isinstance(scope, Session) and source == "phone":
             reply = self._from_the_phone(scope, _clean(text))
             if reply is not None:
@@ -117,7 +131,8 @@ class PhoneAssistant(ConversationHooks):
                 from bridge.phone import PhoneError
 
                 if isinstance(exc, PhoneError):
-                    return LocalReply(f"📱 {exc.message}", speech=exc.message, kind="phone")
+                    return self._ask_choice(scope, exc) or LocalReply(f"📱 {exc.message}", speech=exc.message,
+                                                                       kind="phone")
                 log.exception("Phone command failed")
                 return LocalReply("Something went wrong talking to your phone.", kind="phone")
             if reply is not None:
@@ -138,11 +153,11 @@ class PhoneAssistant(ConversationHooks):
             return None
         action, args, done = command
         try:
-            result = bridge.own_phone_request(link, action, args)
+            result = self._send_cmd(scope, action, args, link)
         except PhoneError as exc:
             if action == "open_app" and "No app called" in exc.message:
                 return None      # "open notepad": not a phone app, so it's for the laptop
-            return LocalReply(f"📱 {exc.message}", speech=exc.message, kind="phone")
+            return self._ask_choice(scope, exc) or LocalReply(f"📱 {exc.message}", speech=exc.message, kind="phone")
         message = result.get("message") or done
         return LocalReply(f"📱 {message}", speech=message, kind="phone")
 
@@ -219,12 +234,85 @@ class PhoneAssistant(ConversationHooks):
         return bridge.phone_for(scope) if bridge is not None else None
 
     def _do(self, scope, action: str, args: dict | None = None, timeout: float = 12.0) -> dict:
+        return self._send_cmd(scope, action, args, None, timeout)
+
+    def _send_cmd(self, scope, action: str, args: dict | None, link=None, timeout: float = 12.0) -> dict:
+        """Send one command to the phone (``link``: the phone the owner is talking on, for itself)."""
         from bridge.phone import PhoneError
 
         bridge = self._bridge()
         if bridge is None:
             raise PhoneError("The phone link isn't available.")
+        args = dict(args or {})
+        if action == "play" and args.get("query") and "video" not in args:
+            try:
+                video = self._lookup(args["query"])
+            except Exception:
+                video = None
+            if video:
+                args["video"] = video          # the phone opens it and it plays at once
+        self._last[_key(scope)] = (action, args, link)
+        if link is not None:
+            return bridge.own_phone_request(link, action, args, timeout)
         return bridge.phone_request(scope, action, args, timeout)
+
+    # -- choices: "which Rahul?" → "the second one" -------------------------------------------------------------------
+    def _ask_choice(self, scope, exc) -> LocalReply | None:
+        choices = [c for c in (exc.data or {}).get("choices", []) if isinstance(c, dict) and c.get("id")][:6]
+        last = self._last.get(_key(scope))
+        if len(choices) < 2 or last is None:
+            return None
+        action, args, link = last
+        self._pending[_key(scope)] = {"action": action, "args": args, "link": link, "choices": choices,
+                                      "at": time.monotonic()}
+        numbers = ["One", "Two", "Three", "Four", "Five", "Six"]
+        lines = "\n".join(f"{i + 1}. {c.get('label') or c['id']}" for i, c in enumerate(choices))
+        spoken = " ".join(f"{numbers[i]}: {c.get('label') or c['id']}." for i, c in enumerate(choices))
+        question = exc.message or "Which one?"
+        return LocalReply(f"📱 {question}\n\n{lines}\n\n_Say the number or the name, or “cancel”._",
+                          speech=f"{question} {spoken} Which one?", kind="phone", listen_after=True)
+
+    def _answer_choice(self, scope, text: str) -> LocalReply | None:
+        from bridge.phone import PhoneError
+
+        pending = self._pending.get(_key(scope))
+        if pending is None:
+            return None
+        if time.monotonic() - pending["at"] > CHOICE_TTL_S:
+            self._pending.pop(_key(scope), None)
+            return None
+        t = re.sub(r"^(?:the |number |option |no\.? )+", "", _clean(text).lower()).strip()
+        t = re.sub(r"\s+(?:one|option)$", "", t) if t not in ORDINALS else t
+        if CANCEL.match(t):
+            self._pending.pop(_key(scope), None)
+            return LocalReply("📱 Okay, cancelled.", speech="Okay, cancelled.", kind="phone")
+        choices = pending["choices"]
+        index = ORDINALS.get(t)
+        if t in ("last", "last one"):
+            index = len(choices) - 1
+        if index is None:
+            words = [w for w in re.findall(r"[a-z0-9]+", t) if w not in ("the", "call", "open", "play", "to", "on")]
+            matches = [i for i, c in enumerate(choices)
+                       if words and all(w in str(c.get("label") or c["id"]).lower() for w in words)]
+            index = matches[0] if len(matches) == 1 else None
+        if index is None or index >= len(choices):
+            self._pending.pop(_key(scope), None)
+            return None                      # not an answer to the question: handle the message normally
+        self._pending.pop(_key(scope), None)
+        choice = choices[index]
+        try:
+            result = self._send_cmd(scope, pending["action"], {**pending["args"], "pick": choice["id"]},
+                                    pending["link"])
+        except PhoneError as exc:
+            return LocalReply(f"📱 {exc.message}", speech=exc.message, kind="phone")
+        message = result.get("message") or f"Done: {choice.get('label') or choice['id']}."
+        return LocalReply(f"📱 {message}", speech=message, kind="phone")
+
+    def forget_session(self, scope) -> None:
+        self._pending.pop(_key(scope), None)
+        self._last.pop(_key(scope), None)
+        if hasattr(self._inner, "forget_session"):
+            self._inner.forget_session(scope)
 
     @staticmethod
     def _ok(text: str, speech: str | None = None) -> LocalReply:

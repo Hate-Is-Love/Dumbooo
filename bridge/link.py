@@ -59,6 +59,8 @@ class PhoneLink:
         self._last_delta = 0.0
         self._lock = threading.Lock()
         self._stt = ThreadPoolExecutor(max_workers=1, thread_name_prefix="PhoneSTT")
+        self._tts = ThreadPoolExecutor(max_workers=1, thread_name_prefix="PhoneTTS")
+        self._input_ok_until = 0.0        # the account check for touchpad input is cached for a second
         for name, handler in ((Events.RESPONSE_DELTA, self._on_delta), (Events.RESPONSE_READY, self._on_ready),
                               (Events.RESPONSE_FAILED, self._on_failed),
                               (Events.RESPONSE_CANCELLED, self._on_cancelled),
@@ -84,6 +86,20 @@ class PhoneLink:
         elif kind == "agenda.get":
             self._require("agenda")
             self._send(self.agenda())
+        elif kind == "agenda.do":
+            self._require("agenda")
+            self._agenda_do(msg)
+        elif kind == "speak":
+            self._require("voice")
+            text = text_field(msg, "text")
+            voice = getattr(self._core, "phone_voice", None)
+            if voice is None:
+                self._send({"t": "speech.unavailable", "id": msg.get("id")})
+            else:
+                self._tts.submit(voice.speak_to, self._send, msg.get("id"), text)
+        elif kind in ("files.list", "files.get"):
+            self._require("chat")
+            self._files(kind, msg)
         elif kind.startswith("input.") or kind.startswith("screen."):
             self._control(kind, msg)
         elif kind == "phone.frame":
@@ -127,8 +143,11 @@ class PhoneLink:
         self._send({"t": "caps", "caps": device.capabilities})
 
     def _control(self, kind: str, msg: dict) -> None:
-        self._require("laptop_control")
-        self._core.auth.require(self.session, "automation.input")
+        self._require("laptop_control")         # in memory: switching control off still applies at once
+        now = time.monotonic()
+        if kind not in ("input.move", "input.scroll", "screen.ack") or now > self._input_ok_until:
+            self._core.auth.require(self.session, "automation.input")
+            self._input_ok_until = now + 1.0
         try:
             if kind == "screen.start":
                 self._start_screen(msg)
@@ -287,6 +306,71 @@ class PhoneLink:
                             "reminder": e.reminder_minutes == 0 and e.description == "Set by DUMBOO"}
                            for e in events if e.starts_at >= now][:100]}
 
+    def _agenda_do(self, msg: dict) -> None:
+        """Add, complete or delete tasks and events from the phone's Agenda screen; answers with the new agenda."""
+        from datetime import datetime as _dt
+
+        action = msg.get("action")
+        tasks, schedule, session = self._core.tasks, self._core.schedule, self.session
+        try:
+            if action == "add_task":
+                due = msg.get("due") or None
+                tasks.create(session, text_field(msg, "title"), priority=str(msg.get("priority") or "medium"),
+                             due_date=due[:10] if due else None,
+                             due_time=due[11:16] if due and len(due) >= 16 else None,
+                             remind_at=msg.get("remind_at") or None)
+            elif action == "complete_task":
+                tasks.set_completed(session, int(msg["id"]), bool(msg.get("done", True)))
+            elif action == "delete_task":
+                tasks.delete(session, int(msg["id"]))
+            elif action == "add_event":
+                starts = _dt.fromisoformat(str(msg.get("starts_at")))
+                minutes = msg.get("reminder_minutes", 10)
+                schedule.create(session, text_field(msg, "title"), starts,
+                                reminder_minutes=None if minutes is None else int(minutes))
+            elif action == "delete_event":
+                schedule.delete(session, int(msg["id"]))
+            else:
+                raise ProtocolError("bad_request", "unknown agenda action")
+        except (KeyError, TypeError, ValueError) as exc:
+            self._send({"t": "agenda.error", "message": str(exc) or "That didn't work."})
+            return
+        except ProtocolError:
+            raise
+        except Exception as exc:
+            message = getattr(exc, "user_message", None) or str(exc)
+            self._send({"t": "agenda.error", "message": message[:200]})
+            return
+        self._send(self.agenda())
+
+    def _files(self, kind: str, msg: dict) -> None:
+        """The phone's Files screen: files in the laptop's Downloads\\DUMBOO Mobile folder, and fetching one."""
+        from bridge.phone import PhoneError, safe_filename
+
+        folder = self.phone._downloads()
+        if kind == "files.list":
+            items = []
+            if folder.is_dir():
+                for p in sorted(folder.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True)[:100]:
+                    if p.is_file() and not p.name.endswith(".part"):
+                        items.append({"name": p.name, "size": p.stat().st_size,
+                                      "modified": int(p.stat().st_mtime)})
+            self._send({"t": "files.list", "files": items})
+            return
+        name = safe_filename(msg.get("name"))
+        path = (folder / name).resolve()
+        if path.parent != folder.resolve() or not path.is_file():
+            self._send({"t": "files.error", "message": "That file isn't in the laptop's DUMBOO Mobile folder."})
+            return
+
+        def send() -> None:
+            try:
+                self.phone.send_file(path, own=True)
+            except PhoneError as exc:
+                self._send({"t": "files.error", "message": exc.message})
+
+        threading.Thread(target=send, name="PhoneFileOut", daemon=True).start()
+
     def push_reminder(self, payload: dict) -> None:
         if not self.device.can("notifications"):
             return
@@ -313,6 +397,7 @@ class PhoneLink:
         self._reminders.stop()
         self.conversation.cancel("phone disconnected")
         self._stt.shutdown(wait=False, cancel_futures=True)
+        self._tts.shutdown(wait=False, cancel_futures=True)
         try:
             self._core.auth.logout(self.session, "phone disconnected")
         except Exception:

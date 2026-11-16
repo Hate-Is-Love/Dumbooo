@@ -1,0 +1,203 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; touch-action: none; user-select: none;
+    background: radial-gradient(ellipse at 50% 38%, #2c2350 0%, #1b1533 55%, #120e22 100%); }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<script src="three.min.js"></script>
+<script>
+// DUMBOO's mini bot. Drag to spin it, tap the head, antenna or chest. The app drives its mood:
+// bot.setState('idle' | 'listening' | 'thinking' | 'speaking'), bot.setLevel(0..1) for the voice level.
+(function () {
+  const W = () => window.innerWidth, H = () => window.innerHeight;
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(W(), H());
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  document.body.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(32, W() / H(), 0.1, 100);
+  camera.position.set(0, 0.3, 10.6);
+  camera.lookAt(0, -0.1, 0);
+
+  scene.add(new THREE.HemisphereLight(0xb8a8ff, 0x0c0918, 0.45));
+  const key = new THREE.DirectionalLight(0xffffff, 1.05); key.position.set(3, 5, 6); scene.add(key);
+  const rim = new THREE.DirectionalLight(0x8f7bff, 1.1); rim.position.set(-5, 2, -4); scene.add(rim);
+  const fill = new THREE.PointLight(0xb9a8ff, 0.35, 20); fill.position.set(0, -2, 5); scene.add(fill);
+
+  // -- materials --------------------------------------------------------------------------------------------
+  const shell = new THREE.MeshPhysicalMaterial({ color: 0x170e46, metalness: 0.35, roughness: 0.32,
+    clearcoat: 1.0, clearcoatRoughness: 0.12 });
+  const screenMat = new THREE.MeshPhysicalMaterial({ color: 0x060608, roughness: 0.18, metalness: 0.4,
+    clearcoat: 1, clearcoatRoughness: 0.05 });
+  const lilac = new THREE.MeshStandardMaterial({ color: 0xc9b8ff, emissive: 0x6e55ff, emissiveIntensity: 0.25,
+    roughness: 0.35 });
+  const glow = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xd8ccff, emissiveIntensity: 1.0,
+    roughness: 0.2 });
+  const eyeMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xf4f0ff, emissiveIntensity: 1.0 });
+  const chestMat = new THREE.MeshStandardMaterial({ color: 0xcdbdff, emissive: 0xb39dff, emissiveIntensity: 0.8 });
+
+  // A box of exactly w x h x d with rounded edges of radius r (the bevel adds r on every side).
+  function roundedBox(w, h, d, r, mat) {
+    const iw = w - 2 * r, ih = h - 2 * r, cr = Math.min(iw, ih) * 0.32, x = -iw / 2, y = -ih / 2;
+    const s = new THREE.Shape();
+    s.moveTo(x + cr, y); s.lineTo(x + iw - cr, y); s.quadraticCurveTo(x + iw, y, x + iw, y + cr);
+    s.lineTo(x + iw, y + ih - cr); s.quadraticCurveTo(x + iw, y + ih, x + iw - cr, y + ih);
+    s.lineTo(x + cr, y + ih); s.quadraticCurveTo(x, y + ih, x, y + ih - cr);
+    s.lineTo(x, y + cr); s.quadraticCurveTo(x, y, x + cr, y);
+    const g = new THREE.ExtrudeGeometry(s, { depth: Math.max(0.01, d - 2 * r), bevelEnabled: true, bevelSize: r,
+      bevelThickness: r, bevelSegments: 10, curveSegments: 16 });
+    g.translate(0, 0, -Math.max(0.01, d - 2 * r) / 2); g.computeVertexNormals();
+    return new THREE.Mesh(g, mat);
+  }
+
+  // -- the bot ------------------------------------------------------------------------------------------------
+  const bot = new THREE.Group(); scene.add(bot);
+  const head = new THREE.Group(); head.position.y = 0.72; bot.add(head);
+  const headShell = roundedBox(2.1, 1.62, 1.55, 0.42, shell); headShell.userData.part = 'head'; head.add(headShell);
+  const face = roundedBox(1.62, 1.08, 0.2, 0.09, screenMat); face.position.set(0, -0.03, 0.71);
+  face.userData.part = 'head'; head.add(face);
+
+  const eyeGeo = new THREE.CapsuleGeometry(0.12, 0.24, 8, 16);
+  const eyes = [-0.36, 0.36].map(x => { const e = new THREE.Mesh(eyeGeo, eyeMat); e.position.set(x, 0.02, 0.83);
+    e.userData.part = 'head'; head.add(e); return e; });
+
+  [-1, 1].forEach(side => {
+    const ear = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.24, 0.22, 28), shell);
+    ear.rotation.z = Math.PI / 2; ear.position.set(side * 1.12, 0, 0); ear.userData.part = 'head'; head.add(ear);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.045, 12, 32), lilac);
+    ring.rotation.y = Math.PI / 2; ring.position.set(side * 1.27, 0, 0.02); ring.userData.part = 'head'; head.add(ring);
+  });
+
+  const antenna = new THREE.Group(); antenna.position.set(0, 0.8, 0); head.add(antenna);
+  const stalk = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.05, 0.5, 12), shell);
+  stalk.position.y = 0.25; stalk.userData.part = 'antenna'; antenna.add(stalk);
+  const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.13, 24, 24), glow);
+  bulb.position.y = 0.56; bulb.userData.part = 'antenna'; antenna.add(bulb);
+  const bulbLight = new THREE.PointLight(0xd8ccff, 0.6, 3); bulbLight.position.y = 0.56; antenna.add(bulbLight);
+
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.26, 0.3, 20), shell);
+  neck.position.y = -0.22; neck.userData.part = 'body'; bot.add(neck);
+  const body = roundedBox(1.42, 1.15, 1.15, 0.34, shell); body.position.y = -0.95; body.userData.part = 'body';
+  bot.add(body);
+  const chestRing = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.06, 32), screenMat);
+  chestRing.rotation.x = Math.PI / 2; chestRing.position.set(0, -0.92, 0.58); chestRing.userData.part = 'chest';
+  bot.add(chestRing);
+  const chest = new THREE.Mesh(new THREE.SphereGeometry(0.11, 24, 24), chestMat);
+  chest.scale.z = 0.4; chest.position.set(0, -0.92, 0.62); chest.userData.part = 'chest'; bot.add(chest);
+
+  // the wireframe globe behind it
+  const globe = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.IcosahedronGeometry(2.75, 1)),
+    new THREE.LineBasicMaterial({ color: 0x9a8cd8, transparent: true, opacity: 0.32 }));
+  globe.position.set(0, 0.05, -0.6); scene.add(globe);
+
+  // soft floor shadow
+  const shadowTex = (() => { const c = document.createElement('canvas'); c.width = c.height = 128;
+    const g = c.getContext('2d'), gr = g.createRadialGradient(64, 64, 4, 64, 64, 64);
+    gr.addColorStop(0, 'rgba(0,0,0,0.55)'); gr.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = gr;
+    g.fillRect(0, 0, 128, 128); return new THREE.CanvasTexture(c); })();
+  const shadow = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 1.0),
+    new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false }));
+  shadow.rotation.x = -Math.PI / 2; shadow.position.y = -1.75; scene.add(shadow);
+
+  // -- state -------------------------------------------------------------------------------------------------------
+  let state = 'idle', level = 0, shownLevel = 0;
+  let yaw = 0, pitch = 0, yawVel = 0, dragging = false, lastX = 0, lastY = 0, downX = 0, downY = 0, downT = 0;
+  let lookX = 0, lookY = 0, blinkT = 2 + Math.random() * 3, blink = 0;
+  let bounce = 0, wiggle = 0, happy = 0, spin = 0;
+
+  window.bot = {
+    setState(s) { state = s || 'idle'; if (s === 'listening') bounce = Math.max(bounce, 0.6); },
+    setLevel(v) { level = Math.max(0, Math.min(1, +v || 0)); },
+    react(kind) { if (kind === 'happy') { happy = 1.2; bounce = 1; } else if (kind === 'spin') { spin = 1; } }
+  };
+
+  const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+  function partAt(x, y) {
+    ndc.set(x / W() * 2 - 1, -(y / H()) * 2 + 1); ray.setFromCamera(ndc, camera);
+    const hit = ray.intersectObjects(bot.children, true)[0];
+    return hit ? (hit.object.userData.part || 'body') : null;
+  }
+  function tell(part) { try { window.Android && Android.onBotTap(part); } catch (e) {} }
+
+  const el = renderer.domElement;
+  el.addEventListener('pointerdown', e => { dragging = true; lastX = downX = e.clientX; lastY = downY = e.clientY;
+    downT = performance.now(); el.setPointerCapture(e.pointerId); });
+  el.addEventListener('pointermove', e => {
+    lookX = (e.clientX / W() - 0.5) * 2; lookY = (e.clientY / H() - 0.45) * 2;
+    if (!dragging) return;
+    const dx = e.clientX - lastX, dy = e.clientY - lastY; lastX = e.clientX; lastY = e.clientY;
+    yawVel = dx * 0.012; yaw += yawVel; pitch = Math.max(-0.5, Math.min(0.5, pitch + dy * 0.006));
+  });
+  el.addEventListener('pointerup', e => {
+    dragging = false;
+    const moved = Math.hypot(e.clientX - downX, e.clientY - downY), quick = performance.now() - downT < 350;
+    if (moved < 10 && quick) {
+      const part = partAt(e.clientX, e.clientY);
+      if (part === 'head') { happy = 1.2; bounce = 1; }
+      else if (part === 'antenna') { wiggle = 1; }
+      else if (part === 'chest' || part === 'body') { bounce = 0.8; }
+      if (part) tell(part);
+    }
+    setTimeout(() => { lookX *= 0.3; lookY *= 0.3; }, 1200);
+  });
+  window.addEventListener('resize', () => { renderer.setSize(W(), H()); camera.aspect = W() / H();
+    camera.updateProjectionMatrix(); });
+
+  // -- animation ------------------------------------------------------------------------------------------------------
+  const clock = new THREE.Clock();
+  function frame() {
+    const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
+    shownLevel += (level - shownLevel) * Math.min(1, dt * 14);
+    if (!dragging) { yaw += yawVel; yawVel *= 0.92; yaw *= 0.965; pitch *= 0.94; }
+    if (spin > 0) { yaw += dt * 9 * spin; spin = Math.max(0, spin - dt * 0.9); }
+
+    bounce = Math.max(0, bounce - dt * 1.8); happy = Math.max(0, happy - dt); wiggle = Math.max(0, wiggle - dt * 1.4);
+    const hop = Math.sin((1 - bounce) * Math.PI) * bounce * 0.35;
+    bot.position.y = Math.sin(t * 1.6) * 0.06 + hop;
+    bot.rotation.y = yaw + Math.sin(t * 0.5) * 0.08;
+    bot.rotation.x = pitch * 0.5;
+    head.rotation.y = lookX * 0.18; head.rotation.x = lookY * 0.12 + (state === 'thinking' ? -0.12 : 0);
+    head.rotation.z = Math.sin(t * 1.1) * 0.03 + (state === 'listening' ? Math.sin(t * 2.4) * 0.05 : 0);
+    antenna.rotation.z = Math.sin(t * 2.0) * 0.06 + Math.sin(t * 22) * wiggle * 0.35;
+
+    // blink
+    blinkT -= dt; if (blinkT <= 0) { blink = 1; blinkT = 2.2 + Math.random() * 3.5; }
+    blink = Math.max(0, blink - dt * 7);
+    const blinkScale = 1 - Math.sin(Math.min(1, blink) * Math.PI) * 0.92;
+    let ex = lookX * 0.07, ey = -lookY * 0.05, sy = 1;
+    if (state === 'thinking') { ex = Math.sin(t * 2.2) * 0.1; ey = 0.08; }
+    if (state === 'listening') sy = 1.15 + shownLevel * 0.35;
+    if (state === 'speaking') sy = 0.55 + shownLevel * 0.9 + Math.abs(Math.sin(t * 11)) * 0.12;
+    if (happy > 0) sy = 0.35;
+    eyes.forEach((e, i) => { e.position.x = (i ? 0.36 : -0.36) + ex; e.position.y = 0.02 + ey + (happy > 0 ? 0.04 : 0);
+      e.scale.set(1, sy * blinkScale, 1); });
+
+    // lights and globe follow the mood
+    const pulse = state === 'listening' ? 0.6 + shownLevel * 2.4 : state === 'speaking' ? 0.6 + shownLevel * 1.6 :
+      state === 'thinking' ? 0.6 + Math.abs(Math.sin(t * 5)) * 0.9 : 0.55 + Math.sin(t * 2) * 0.15;
+    bulb.material.emissiveIntensity = pulse; bulbLight.intensity = pulse * 0.9;
+    chest.material.emissiveIntensity = 0.5 + (state === 'idle' ? Math.sin(t * 2.2) * 0.2 : pulse * 0.8);
+    chest.scale.set(1 + shownLevel * 0.35, 1 + shownLevel * 0.35, 0.4);
+    globe.rotation.y += dt * (state === 'thinking' ? 0.9 : state === 'listening' ? 0.35 : 0.12);
+    globe.rotation.x = Math.sin(t * 0.2) * 0.15;
+    globe.material.opacity = 0.24 + (state === 'idle' ? 0 : 0.18) + shownLevel * 0.25;
+    globe.scale.setScalar(1 + shownLevel * 0.06);
+    shadow.scale.setScalar(1 - hop * 0.5 - Math.sin(t * 1.6) * 0.03);
+
+    renderer.render(scene, camera);
+    requestAnimationFrame(frame);
+  }
+  frame();
+  tell('ready');
+})();
+</script>
+</body>
+</html>

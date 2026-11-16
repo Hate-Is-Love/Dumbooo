@@ -70,6 +70,10 @@ class PhoneSection(HudPanel):
         self.remove.clicked.connect(self._remove)
         self.toggle = QPushButton("TURN PHONE LINK OFF")
         self.toggle.clicked.connect(self._toggle)
+        self.anywhere = QLabel("")
+        self.anywhere.setWordWrap(True)
+        self.anywhere.setOpenExternalLinks(True)
+        self.anywhere.setObjectName("HudLabel")
         row = QHBoxLayout()
         row.addWidget(self.remove)
         row.addWidget(self.toggle)
@@ -80,7 +84,7 @@ class PhoneSection(HudPanel):
                       "Tailscale on both devices and add the laptop's 100.x address in the app (README 22.10).")
         note.setWordWrap(True)
         note.setObjectName("HudLabel")
-        for w in (self.status, self.qr, self.code, self.pair, self.panel, self.devices, self.control):
+        for w in (self.status, self.anywhere, self.qr, self.code, self.pair, self.panel, self.devices, self.control):
             self.body.addWidget(w)
         self.body.addLayout(row)
         self.body.addWidget(note)
@@ -109,6 +113,13 @@ class PhoneSection(HudPanel):
         else:
             text = "Link off. It switches on when you pair a phone."
         self.status.setText(text)
+        tailscale = [a for a in status["addresses"] if a.startswith("100.")]
+        self.anywhere.setText(
+            f"🌍 Anywhere: ready (Tailscale {tailscale[0]}). With Tailscale on your phone too, DUMBOO works on mobile "
+            "data." if tailscale else
+            "🌍 Away from home Wi-Fi? Install <a href='https://tailscale.com/download/windows'>Tailscale</a> on this "
+            "laptop and on your phone, and sign in to both with the same account. The phone finds the laptop by "
+            "itself after that (no router changes).")
         self.toggle.setVisible(status["running"])
         self.devices.clear()
         for d in devices:

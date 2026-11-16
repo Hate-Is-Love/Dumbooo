@@ -30,6 +30,29 @@ object FileTransfer {
         var got = 0L
     }
     private val incoming = ConcurrentHashMap<String, Incoming>()
+    /** Files this phone asked the laptop for (Files screen): accepted even with "Files" switched off. */
+    private val expected = ConcurrentHashMap.newKeySet<String>()
+
+    fun expect(name: String) { expected += safeName(name) }
+
+    /** Files received on this phone, newest first: (name, uri, time). */
+    fun received(context: Context): List<Triple<String, String, Long>> {
+        val raw = context.getSharedPreferences("dumboo_files", Context.MODE_PRIVATE).getString("received", "[]")!!
+        val a = org.json.JSONArray(raw)
+        return List(a.length()) { i -> a.getJSONObject(i).let { Triple(it.optString("n"), it.optString("u"), it.optLong("t")) } }
+    }
+
+    private fun remember(context: Context, name: String, uri: String) {
+        val prefs = context.getSharedPreferences("dumboo_files", Context.MODE_PRIVATE)
+        val list = listOf(Triple(name, uri, System.currentTimeMillis())) + received(context).take(49)
+        val a = org.json.JSONArray()
+        list.forEach { (n, u, t) -> a.put(JSONObject().put("n", n).put("u", u).put("t", t)) }
+        prefs.edit().putString("received", a.toString()).apply()
+        _changed.tryEmit(Unit)
+    }
+
+    private val _changed = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 4)
+    val changed: kotlinx.coroutines.flow.SharedFlow<Unit> = _changed
 
     // -- laptop -> phone ----------------------------------------------------------------------------------------------
     fun onMessage(context: Context, msg: JSONObject) {
@@ -37,7 +60,8 @@ object FileTransfer {
         when (msg.optString("t")) {
             "file.begin" -> {
                 val size = msg.optLong("size")
-                if (!Features.usable(context, "files") || size <= 0 || size > MAX_BYTES) return
+                val asked = msg.optBoolean("requested") && expected.remove(safeName(msg.optString("name")))
+                if (!(asked || Features.usable(context, "files")) || size <= 0 || size > MAX_BYTES) return
                 val dir = File(context.cacheDir, "incoming").apply { mkdirs() }
                 val file = File(dir, "f$id.part")
                 incoming[id] = Incoming(safeName(msg.optString("name")), size, file, FileOutputStream(file))
@@ -53,15 +77,16 @@ object FileTransfer {
                 val reply = msg.optLong("reply")
                 val entry = incoming.remove(id)
                 val result = when {
-                    !Features.usable(context, "files") -> CommandResult(false, "Receiving files is switched off on the phone.")
-                    entry == null -> CommandResult(false, "The file didn't arrive.")
+                    entry == null -> CommandResult(false, "The file didn't arrive (receiving files is off, or it " +
+                        "was too big).")
                     else -> {
                         entry.out.close()
                         if (entry.got != entry.size) {
                             entry.file.delete(); CommandResult(false, "The file arrived incomplete.")
                         } else {
-                            val where = saveToDownloads(context, entry.file, entry.name)
+                            val (where, uri) = saveToDownloads(context, entry.file, entry.name)
                             entry.file.delete()
+                            remember(context, entry.name, uri)
                             notifySaved(context, entry.name)
                             CommandResult(true, "Saved ${entry.name} in the phone's $where.")
                         }
@@ -83,7 +108,7 @@ object FileTransfer {
         name.substringAfterLast('/').substringAfterLast('\\').replace(Regex("[^\\w .()\\[\\]-]+"), "_")
             .trim(' ', '.').ifBlank { "file" }.take(120)
 
-    private fun saveToDownloads(context: Context, file: File, name: String): String {
+    private fun saveToDownloads(context: Context, file: File, name: String): Pair<String, String> {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val values = ContentValues().apply {
                 put(MediaStore.Downloads.DISPLAY_NAME, name)
@@ -97,11 +122,12 @@ object FileTransfer {
             values.clear()
             values.put(MediaStore.Downloads.IS_PENDING, 0)
             resolver.update(uri, values, null, null)
-            return "Downloads/DUMBOO folder"
+            return "Downloads/DUMBOO folder" to uri.toString()
         }
         val dir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: context.filesDir
-        file.copyTo(File(dir, name), overwrite = false)
-        return "DUMBOO Mobile downloads folder"
+        val target = File(dir, name)
+        file.copyTo(target, overwrite = false)
+        return "DUMBOO Mobile downloads folder" to Uri.fromFile(target).toString()
     }
 
     private fun notifySaved(context: Context, name: String) {
@@ -116,8 +142,9 @@ object FileTransfer {
 
     // -- phone -> laptop ----------------------------------------------------------------------------------------------
     /** Sends a file the owner picked or shared. Returns a message to show. Runs on a background thread. */
-    suspend fun send(context: Context, uri: Uri): String {
-        if (!Features.usable(context, "files")) return "Turn on “Files” in DUMBOO Mobile → Settings first."
+    /** [own]: you picked or shared it yourself (then the "Files" switch, which limits the laptop, isn't needed). */
+    suspend fun send(context: Context, uri: Uri, own: Boolean = false): String {
+        if (!own && !Features.usable(context, "files")) return "Turn on “Files” in DUMBOO Mobile → Settings first."
         if (!Bridge.isReady()) return "Not connected to the laptop."
         var name = "file"
         var size = -1L
@@ -132,7 +159,8 @@ object FileTransfer {
         val id = "P${ids.getAndIncrement()}"
         val done = CompletableDeferred<String>()
         saved[id] = done
-        Bridge.send(JSONObject().put("t", "file.begin").put("id", id).put("name", safeName(name)).put("size", size))
+        Bridge.send(JSONObject().put("t", "file.begin").put("id", id).put("name", safeName(name)).put("size", size)
+            .put("own", own))
         val buffer = ByteArray(CHUNK)
         context.contentResolver.openInputStream(uri)?.use { input ->
             while (true) {

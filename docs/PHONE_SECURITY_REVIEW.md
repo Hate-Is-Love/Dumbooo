@@ -71,6 +71,16 @@ Issues found while reviewing the Phase 3–5 code. All are fixed in this version
   switches. The phone allows this only for everyday actions (calls, music, apps, alarms, torch, maps, texts) and
   only within 90 s of its owner sending a message. A compromised laptop could use that window to place a call or
   open an app; texts are only pre-filled, never sent.
+* **App 1.2.**
+  * **Song lookups:** "play …" sends only the song words to YouTube (from the laptop).
+  * **The 3D bot:** a local page in a WebView with JavaScript, no file access and no navigation. Its only bridge
+    is "the bot was tapped".
+  * **Files screen:** lists and fetches only names inside `Downloads\DUMBOO Mobile`. Paths are rejected, and a
+    test covers it.
+  * **Things the owner sends themselves** (`own`): the phone's switches don't apply, so a compromised phone could
+    push a file or clipboard text. That was already possible by claiming the switch was on.
+  * **Touchpad:** the account check is cached for 1 s for touchpad moves only. Clicks and keys are still checked
+    every time.
 * **Not independently audited.** There is no fuzzing yet, and real-device testing so far is by the owner only.
 
 ## Tests that cover this

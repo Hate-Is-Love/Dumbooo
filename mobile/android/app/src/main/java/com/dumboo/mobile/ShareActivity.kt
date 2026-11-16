@@ -51,8 +51,8 @@ class ShareActivity : ComponentActivity() {
                 repeat(40) { if (!Bridge.isReady()) delay(250) }
             }
             val message = withContext(Dispatchers.IO) {
-                if (uris.isNotEmpty()) uris.take(10).map { FileTransfer.send(this@ShareActivity, it) }.last()
-                else Bridge.pushClipboard(text.orEmpty())
+                if (uris.isNotEmpty()) uris.take(10).map { FileTransfer.send(this@ShareActivity, it, own = true) }.last()
+                else Bridge.pushClipboard(text.orEmpty(), own = true)
             }
             done(message)
         }

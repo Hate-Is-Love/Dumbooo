@@ -56,7 +56,7 @@ fun PhoneSettings() {
     val pickFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) scope.launch {
             Toast.makeText(context, "Sending…", Toast.LENGTH_SHORT).show()
-            val message = withContext(Dispatchers.IO) { FileTransfer.send(context, uri) }
+            val message = withContext(Dispatchers.IO) { FileTransfer.send(context, uri, own = true) }
             Toast.makeText(context, message, Toast.LENGTH_LONG).show()
         }
     }
@@ -67,7 +67,7 @@ fun PhoneSettings() {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedButton(onClick = {
                 val text = clipboard.getText()?.text.orEmpty()
-                Toast.makeText(context, Bridge.pushClipboard(text), Toast.LENGTH_LONG).show()
+                Toast.makeText(context, Bridge.pushClipboard(text, own = true), Toast.LENGTH_LONG).show()
             }) { Text("📋 SEND CLIPBOARD") }
             OutlinedButton(onClick = { pickFile.launch(arrayOf("*/*")) }) { Text("📤 SEND A FILE") }
         }

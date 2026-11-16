@@ -59,7 +59,8 @@ def make_core(paths, signed_in: bool = True, **kw):
                     synth_factory=lambda p, s: FakeSynth(), whisper_loader=lambda name, **k: FakeWhisperModel("hi"),
                     vad=AmplitudeVAD(), wake_engine_factory=_Engine,
                     environ={"AI_PROVIDER": "echo"},  # isolated: never reads real keys, never calls an API
-                    password_hasher=make_hasher(fast=True), token_store=MemoryTokenStore())
+                    password_hasher=make_hasher(fast=True), token_store=MemoryTokenStore(),
+                    music_lookup=lambda query: None)
     if "desktop" not in kw:  # never touch the real desktop or browser in tests
         from tests.automation_fakes import FakeBrowser, FakeDesktop, FakeUIA, fake_capture
         desktop = FakeDesktop(paths.data_dir / "trash")

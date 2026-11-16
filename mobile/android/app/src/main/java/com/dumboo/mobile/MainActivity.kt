@@ -19,7 +19,6 @@ import com.dumboo.mobile.ui.DumbooApp
 import kotlinx.coroutines.launch
 
 class MainActivity : FragmentActivity() {
-    private lateinit var speaker: Speaker
     private val unlocked = mutableStateOf(false)
     private val pendingPairLink = mutableStateOf<String?>(null)
     private val askNotifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -27,9 +26,8 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         ConnectionService.createChannels(this)
-        speaker = Speaker(this)
+        Voice.init(this)
         pendingPairLink.value = pairLink(intent)
-        lifecycleScope.launch { Bridge.speak.collect { speaker.say(it.text) } }
         if (Store.laptop(this) != null) startLink()
         setContent {
             DumbooApp(
@@ -51,16 +49,18 @@ class MainActivity : FragmentActivity() {
     override fun onStart() {
         super.onStart()
         App.inForeground = true
+        App.activity = java.lang.ref.WeakReference(this)
         Bridge.sendFeatures()          // permissions may have changed in the phone's settings
     }
 
     override fun onStop() {
         App.inForeground = false
+        App.activity = null
         super.onStop()
     }
 
     override fun onDestroy() {
-        speaker.shutdown()
+        Voice.stopSpeaking()
         super.onDestroy()
     }
 

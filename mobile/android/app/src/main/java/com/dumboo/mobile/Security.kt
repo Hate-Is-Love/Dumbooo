@@ -148,5 +148,11 @@ object Store {
     fun speakAnswers(context: Context) = prefs(context).getBoolean("speak", true)
     fun setSpeakAnswers(context: Context, on: Boolean) = prefs(context).edit().putBoolean("speak", on).apply()
     fun appLock(context: Context) = prefs(context).getBoolean("app_lock", true)
+    /** Speak with DUMBOO's own voice from the laptop (otherwise the phone's voice). */
+    fun laptopVoice(context: Context) = prefs(context).getBoolean("laptop_voice", true)
+    fun setLaptopVoice(context: Context, on: Boolean) = prefs(context).edit().putBoolean("laptop_voice", on).apply()
+    /** Speech recognition language, e.g. en-IN (Indian English, good with Hindi names and songs). */
+    fun voiceLanguage(context: Context): String = prefs(context).getString("voice_language", "en-IN")!!
+    fun setVoiceLanguage(context: Context, tag: String) = prefs(context).edit().putString("voice_language", tag).apply()
     fun setAppLock(context: Context, on: Boolean) = prefs(context).edit().putBoolean("app_lock", on).apply()
 }

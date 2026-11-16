@@ -126,7 +126,7 @@ object PhoneControl {
         }
         return try {
             when (action) {
-                "call" -> call(context, args.optString("who"), own)
+                "call" -> call(context, args.optString("who"), own, args.optString("pick"))
                 "dial" -> dial(context, args.optString("who"), args.optString("who"), own)
                 "torch" -> torch(context, args.optBoolean("on"))
                 "alarm" -> launch(context, Intent(AlarmClock.ACTION_SET_ALARM)
@@ -144,13 +144,13 @@ object PhoneControl {
                 "search" -> launch(context, Intent(Intent.ACTION_VIEW, Uri.parse(
                     "https://www.youtube.com/results?search_query=" + Uri.encode(args.optString("query")))),
                     "Search YouTube", "Searching YouTube for ${args.optString("query")}.")
-                "sms" -> sms(context, args.optString("who"), args.optString("text"))
-                "play" -> play(context, args.optString("query"))
+                "sms" -> sms(context, args.optString("who"), args.optString("text"), args.optString("pick"))
+                "play" -> play(context, args.optString("query"), args.optString("video"))
                 "media" -> media(context, args.optString("key"))
                 "volume" -> volume(context, args.optString("direction"))
                 "ring" -> ring(context)
                 "stop_ring" -> { stopRing(context); CommandResult(true, "Stopped ringing.") }
-                "open_app" -> openApp(context, args.optString("name"))
+                "open_app" -> openApp(context, args.optString("name"), args.optString("pick"))
                 "clipboard.set" -> setClipboard(context, args.optString("text"))
                 "reply" -> NotificationService.reply(args.optString("key"), args.optString("text"))
                 "dismiss" -> NotificationService.dismiss(args.optString("key"))
@@ -192,8 +192,16 @@ object PhoneControl {
     /** Start an activity; if Android blocks it because the app is in the background, offer it as a notification. */
     internal fun launch(context: Context, intent: Intent, title: String, done: String): CommandResult {
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        if (Features.canOpenFromBackground(context) || App.inForeground) {
-            context.startActivity(intent)
+        val activity = App.activity?.get()
+        if (App.inForeground && activity != null) {             // DUMBOO is on screen: just open it
+            main.post { runCatching { activity.startActivity(intent) } }
+            return CommandResult(true, done)
+        }
+        if (android.provider.Settings.canDrawOverlays(context)) {
+            BackgroundLauncher.start(context, intent)             // "display over other apps" is allowed
+            return CommandResult(true, done)
+        }
+        if (Features.controlServiceOn(context) && ControlService.startActivity(intent)) {
             return CommandResult(true, done)
         }
         val pending = PendingIntent.getActivity(context, title.hashCode(), intent,
@@ -207,8 +215,9 @@ object PhoneControl {
             .setContentIntent(pending)
             .build()
         notify(context, ACTION_NOTIFICATION, n)
-        return CommandResult(true, "$title: tap the notification on the phone. (Let DUMBOO Mobile open screens " +
-            "from the background in its Settings to skip this.)")
+        App.needsOverlay = true
+        return CommandResult(true, "$title: tap the notification on the phone. To open things straight away, " +
+            "allow DUMBOO Mobile to “display over other apps” (the app asks next time you open it).")
     }
 
     private fun notify(context: Context, id: Int, n: android.app.Notification) {
@@ -216,14 +225,24 @@ object PhoneControl {
     }
 
     // -- calls -------------------------------------------------------------------------------------------------------
-    private fun call(context: Context, who: String, own: Boolean = false): CommandResult {
+    private fun call(context: Context, who: String, own: Boolean = false, pick: String = ""): CommandResult {
+        if (pick.contains('|')) return dial(context, pick.substringAfter('|'), pick.substringBefore('|'), own)
         if (who.isBlank()) return CommandResult(false, "Who should I call?")
         if (!Features.granted(context, Manifest.permission.READ_CONTACTS)) {
             return CommandResult(false, "Allow DUMBOO Mobile to read contacts (Settings → Calls) to call by name.")
         }
-        val (name, number) = findContact(context, who)
-            ?: return CommandResult(false, "No contact called “$who” on the phone.")
+        val matches = findContacts(context, who)
+        if (matches.isEmpty()) return CommandResult(false, "No contact called “$who” on the phone.")
+        if (matches.size > 1) return choices("I found ${matches.size} matches for “$who”.", matches)
+        val (name, number, _) = matches.first()
         return dial(context, number, name, own)
+    }
+
+    /** Several matches: DUMBOO reads them out and you pick one by voice ("the second one"). */
+    private fun choices(question: String, items: List<Triple<String, String, String>>): CommandResult {
+        val arr = org.json.JSONArray()
+        items.take(6).forEach { (name, value, label) -> arr.put(JSONObject().put("id", "$name|$value").put("label", label)) }
+        return CommandResult(false, question, JSONObject().put("choices", arr))
     }
 
     private fun dial(context: Context, number: String, name: String, own: Boolean = false): CommandResult {
@@ -239,15 +258,20 @@ object PhoneControl {
     }
 
     /** Opens a text to the contact with the message filled in; the owner taps Send (nothing is sent silently). */
-    private fun sms(context: Context, who: String, text: String): CommandResult {
+    private fun sms(context: Context, who: String, text: String, pick: String = ""): CommandResult {
         val digits = who.filter { it.isDigit() || it == '+' }
-        val (name, number) = if (digits.length >= 3 && digits.length >= who.count { !it.isWhitespace() } - 1) {
+        val (name, number) = if (pick.contains('|')) {
+            pick.substringBefore('|') to pick.substringAfter('|')
+        } else if (digits.length >= 3 && digits.length >= who.count { !it.isWhitespace() } - 1) {
             who to digits
         } else {
             if (!Features.granted(context, Manifest.permission.READ_CONTACTS)) {
                 return CommandResult(false, "Allow DUMBOO Mobile to read contacts (Settings → Calls) to text by name.")
             }
-            findContact(context, who) ?: return CommandResult(false, "No contact called “$who” on the phone.")
+            val matches = findContacts(context, who)
+            if (matches.isEmpty()) return CommandResult(false, "No contact called “$who” on the phone.")
+            if (matches.size > 1) return choices("I found ${matches.size} matches for “$who”.", matches)
+            matches.first().let { it.first to it.second }
         }
         val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:" + Uri.encode(number))).putExtra("sms_body", text)
         return launch(context, intent, "Text $name", "Opened a text to $name with your message: tap Send.")
@@ -262,13 +286,17 @@ object PhoneControl {
         return CommandResult(true, if (on) "Torch on." else "Torch off.")
     }
 
-    private fun findContact(context: Context, who: String): Pair<String, String>? {
+    private fun findContact(context: Context, who: String): Pair<String, String>? =
+        findContacts(context, who).firstOrNull()?.let { it.first to it.second }
+
+    /** The best-matching contacts as (name, number, label): several only when they match equally well. */
+    private fun findContacts(context: Context, who: String): List<Triple<String, String, String>> {
         val wanted = who.trim().lowercase()
         val cursor = context.contentResolver.query(ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
-            arrayOf(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME, ContactsContract.CommonDataKinds.Phone.NUMBER),
-            null, null, null) ?: return null
-        var best: Pair<String, String>? = null
-        var bestScore = 0
+            arrayOf(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME, ContactsContract.CommonDataKinds.Phone.NUMBER,
+                ContactsContract.CommonDataKinds.Phone.TYPE, ContactsContract.CommonDataKinds.Phone.LABEL),
+            null, null, null) ?: return emptyList()
+        val scored = mutableListOf<Pair<Int, Triple<String, String, String>>>()
         cursor.use {
             while (it.moveToNext()) {
                 val name = it.getString(0) ?: continue
@@ -280,15 +308,30 @@ object PhoneControl {
                     lower.contains(wanted) -> 1
                     else -> 0
                 }
-                if (score > bestScore) { best = name to number; bestScore = score }
+                if (score == 0) continue
+                val type = ContactsContract.CommonDataKinds.Phone.getTypeLabel(context.resources, it.getInt(2),
+                    it.getString(3) ?: "").toString().lowercase()
+                scored += score to Triple(name, number, "$name, $type, ending ${number.filter { c -> c.isDigit() }.takeLast(4)}")
             }
         }
-        return best
+        val best = scored.maxOfOrNull { it.first } ?: return emptyList()
+        return scored.filter { it.first == best }.map { it.second }
+            .distinctBy { it.first.lowercase() + it.second.filter { c -> c.isDigit() }.takeLast(9) }
     }
 
     // -- music -------------------------------------------------------------------------------------------------------
-    private fun play(context: Context, query: String): CommandResult {
+    private fun play(context: Context, query: String, video: String = ""): CommandResult {
         if (query.isBlank()) return media(context, "play")
+        if (video.matches(Regex("[A-Za-z0-9_-]{11}"))) {
+            // The laptop found the song: open it so it starts playing at once (YouTube Music, else YouTube).
+            val pm = context.packageManager
+            val music = Intent(Intent.ACTION_VIEW, Uri.parse("https://music.youtube.com/watch?v=$video"))
+                .setPackage("com.google.android.apps.youtube.music")
+            val youtube = Intent(Intent.ACTION_VIEW, Uri.parse("vnd.youtube:$video"))
+            val intent = listOf(music, youtube).firstOrNull { it.resolveActivity(pm) != null }
+                ?: Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/watch?v=$video"))
+            return launch(context, intent, "Play $query", "Playing “$query”.")
+        }
         val search = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH)
             .putExtra(SearchManager.QUERY, query)
             .putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
@@ -372,18 +415,26 @@ object PhoneControl {
     }
 
     // -- apps and clipboard ------------------------------------------------------------------------------------------------
-    private fun openApp(context: Context, name: String): CommandResult {
+    private fun openApp(context: Context, name: String, pick: String = ""): CommandResult {
+        val pm = context.packageManager
+        if (pick.contains('|')) {
+            val intent = pm.getLaunchIntentForPackage(pick.substringAfter('|'))
+                ?: return CommandResult(false, "${pick.substringBefore('|')} can't be opened.")
+            return launch(context, intent, "Open ${pick.substringBefore('|')}", "Opened ${pick.substringBefore('|')}.")
+        }
         val wanted = name.trim().lowercase().removeSuffix(" app")
         if (wanted.isBlank()) return CommandResult(false, "Which app?")
-        val pm = context.packageManager
         val apps = pm.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0)
-        val match = apps.map { it to it.loadLabel(pm).toString() }
-            .sortedBy { (_, label) -> if (label.lowercase() == wanted) 0 else if (label.lowercase().startsWith(wanted)) 1 else 2 }
-            .firstOrNull { (_, label) -> label.lowercase().contains(wanted) }
-            ?: return CommandResult(false, "No app called “$name” on the phone.")
-        val intent = pm.getLaunchIntentForPackage(match.first.activityInfo.packageName)
-            ?: return CommandResult(false, "${match.second} can't be opened.")
-        return launch(context, intent, "Open ${match.second}", "Opened ${match.second} on the phone.")
+            .map { it.activityInfo.packageName to it.loadLabel(pm).toString() }.distinctBy { it.first }
+        val exact = apps.filter { it.second.lowercase() == wanted }
+        val matches = exact.ifEmpty { apps.filter { it.second.lowercase().contains(wanted) } }
+            .ifEmpty { apps.filter { wanted.split(' ').all { w -> w in it.second.lowercase() } } }
+        if (matches.isEmpty()) return CommandResult(false, "No app called “$name” on the phone.")
+        if (matches.size > 1) return choices("I found ${matches.size} apps for “$name”.",
+            matches.map { Triple(it.second, it.first, it.second) })
+        val (pkg, label) = matches.first()
+        val intent = pm.getLaunchIntentForPackage(pkg) ?: return CommandResult(false, "$label can't be opened.")
+        return launch(context, intent, "Open $label", "Opened $label.")
     }
 
     private fun setClipboard(context: Context, text: String): CommandResult {

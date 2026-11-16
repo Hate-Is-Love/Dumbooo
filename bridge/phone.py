@@ -50,9 +50,10 @@ SAFE_NAME = re.compile(r"[^\w .()\[\]-]+")
 
 
 class PhoneError(RuntimeError):
-    def __init__(self, message: str) -> None:
+    def __init__(self, message: str, data: dict | None = None) -> None:
         super().__init__(message)
         self.message = message
+        self.data = data or {}
 
 
 def safe_filename(name: str) -> str:
@@ -112,7 +113,7 @@ class PhoneState:
                 self._waiting.pop(cmd_id, None)
             raise PhoneError("The phone didn't answer in time. Is DUMBOO Mobile still open and connected?")
         if not box.get("ok"):
-            raise PhoneError(box.get("message") or "The phone couldn't do that.")
+            raise PhoneError(box.get("message") or "The phone couldn't do that.", box.get("data"))
         return box
 
     def send_nowait(self, action: str, args: dict | None = None) -> None:
@@ -147,7 +148,8 @@ class PhoneState:
             self._notification(msg, device)
         elif kind == "clip.push":
             text = msg.get("text")
-            if isinstance(text, str) and text and len(text) <= 20000 and self.can("clipboard"):
+            # "own": the owner pressed "send clipboard" on the phone themselves
+            if isinstance(text, str) and text and len(text) <= 20000 and (self.can("clipboard") or msg.get("own")):
                 self._publish("clipboard", {"device": device.id, "name": device.name, "text": text})
         elif kind in ("file.begin", "file.chunk", "file.end"):
             self._file(kind, msg, device)
@@ -190,9 +192,9 @@ class PhoneState:
     def _file(self, kind: str, msg: dict, device) -> None:
         from bridge.protocol import ProtocolError, b64decode
 
-        if not self.can("files"):
-            raise ProtocolError("not_allowed", "Sending files is switched off on the phone.")
         file_id = str(msg.get("id") or "")[:40]
+        if kind == "file.begin" and not (self.can("files") or msg.get("own")):
+            raise ProtocolError("not_allowed", "Sending files is switched off on the phone.")
         if kind == "file.begin":
             size = msg.get("size")
             if not isinstance(size, int) or not 0 < size <= MAX_FILE_BYTES:
@@ -245,11 +247,12 @@ class PhoneState:
             event.set()
 
     # -- files to the phone ------------------------------------------------------------------------------------------
-    def send_file(self, path: Path, timeout: float = 120.0) -> dict:
+    def send_file(self, path: Path, timeout: float = 120.0, own: bool = False) -> dict:
+        """``own``: the phone asked for this file itself (its Files screen), so its "files" switch isn't needed."""
         import base64
         import mimetypes
 
-        if not self.can("files"):
+        if not own and not self.can("files"):
             raise PhoneError("Receiving files is switched off on your phone.")
         path = Path(path)
         size = path.stat().st_size
@@ -257,7 +260,8 @@ class PhoneState:
             raise PhoneError(f"Files must be up to {MAX_FILE_BYTES // 1024 // 1024} MB.")
         file_id = f"L{next(self._ids)}"
         self._send({"t": "file.begin", "id": file_id, "name": safe_filename(path.name), "size": size,
-                    "mime": mimetypes.guess_type(path.name)[0] or "application/octet-stream"})
+                    "mime": mimetypes.guess_type(path.name)[0] or "application/octet-stream",
+                    "requested": own})
         with path.open("rb") as handle:
             while chunk := handle.read(CHUNK_BYTES):
                 self._send({"t": "file.chunk", "id": file_id, "data": base64.b64encode(chunk).decode()})

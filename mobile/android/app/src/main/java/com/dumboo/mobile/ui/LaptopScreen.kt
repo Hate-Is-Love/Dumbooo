@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -61,6 +62,19 @@ fun LaptopScreen() {
     val frame by Bridge.screen.collectAsStateWithLifecycle()
     var showing by remember { mutableStateOf(false) }
     var text by remember { mutableStateOf("") }
+    var bigPad by remember { mutableStateOf(false) }
+    if (bigPad) {
+        // the whole screen is the touchpad
+        Column(Modifier.fillMaxSize().padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Touchpad(Modifier.fillMaxWidth().weight(1f))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { Bridge.click() }, modifier = Modifier.weight(1f).height(56.dp)) { Text("LEFT") }
+                OutlinedButton(onClick = { Bridge.click(button = "right") }, modifier = Modifier.weight(1f).height(56.dp)) { Text("RIGHT") }
+                Button(onClick = { bigPad = false }, modifier = Modifier.height(56.dp)) { Text("DONE") }
+            }
+        }
+        return
+    }
     DisposableEffect(Unit) { onDispose { if (showing) Bridge.stopScreen() } }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
@@ -99,48 +113,11 @@ fun LaptopScreen() {
             }
         }
         // -- touchpad ----------------------------------------------------------------------------------------------
-        Text("Touchpad", color = Muted, fontSize = 12.sp)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Box(Modifier.weight(1f).height(170.dp).background(Panel, RoundedCornerShape(12.dp))
-                .pointerInput(Unit) {
-                    var carryX = 0f
-                    var carryY = 0f
-                    detectDragGestures { change, drag ->
-                        change.consume()
-                        carryX += drag.x * 1.6f
-                        carryY += drag.y * 1.6f
-                        val dx = carryX.toInt()
-                        val dy = carryY.toInt()
-                        if (dx != 0 || dy != 0) {
-                            Bridge.move(dx, dy)
-                            carryX -= dx
-                            carryY -= dy
-                        }
-                    }
-                }
-                .pointerInput(Unit) {
-                    detectTapGestures(onTap = { Bridge.click() }, onDoubleTap = { Bridge.click(double = true) },
-                        onLongPress = { Bridge.click(button = "right") })
-                }, contentAlignment = Alignment.Center) {
-                Text("drag to move · tap to click", color = Muted, fontSize = 12.sp)
-            }
-            // scroll strip: drag up/down
-            Box(Modifier.width(52.dp).height(170.dp).background(Panel, RoundedCornerShape(12.dp))
-                .pointerInput(Unit) {
-                    var carry = 0f
-                    detectDragGestures { change, drag ->
-                        change.consume()
-                        carry += drag.y
-                        val clicks = (carry / 40f).toInt()
-                        if (clicks != 0) {
-                            Bridge.scroll(-clicks)
-                            carry -= clicks * 40f
-                        }
-                    }
-                }, contentAlignment = Alignment.Center) {
-                Text("⇕", color = Cyan, fontSize = 22.sp)
-            }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Touchpad", color = Muted, fontSize = 12.sp, modifier = Modifier.weight(1f))
+            OutlinedButton(onClick = { bigPad = true }) { Text("⛶ FULL SCREEN") }
         }
+        Touchpad(Modifier.fillMaxWidth().height(340.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = { Bridge.click() }, modifier = Modifier.weight(1f)) { Text("LEFT") }
             OutlinedButton(onClick = { Bridge.click(button = "right") }, modifier = Modifier.weight(1f)) { Text("RIGHT") }
@@ -173,6 +150,47 @@ private fun KeyRow(keys: List<Pair<String, String>>) {
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 2.dp, vertical = 8.dp)) {
                 Text(label, fontSize = 12.sp, maxLines = 1)
             }
+        }
+    }
+}
+
+/**
+ * Touchpad with scrolling on the right edge. Faster swipes move the pointer further (pointer acceleration); moves are
+ * added up and sent ~120 times a second, so the pointer follows the finger without lag.
+ */
+@Composable
+private fun Touchpad(modifier: Modifier) {
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Box(Modifier.weight(1f).fillMaxHeight().background(Panel, RoundedCornerShape(16.dp))
+            .border(1.dp, Cyan.copy(alpha = 0.18f), RoundedCornerShape(16.dp))
+            .pointerInput(Unit) {
+                detectDragGestures { change, drag ->
+                    change.consume()
+                    val speed = kotlin.math.hypot(drag.x, drag.y)
+                    val gain = 1.4f + (speed / 9f).coerceAtMost(3.2f)       // slow = precise, fast = far
+                    Bridge.move(drag.x * gain, drag.y * gain)
+                }
+            }
+            .pointerInput(Unit) {
+                detectTapGestures(onTap = { Bridge.click() }, onDoubleTap = { Bridge.click(double = true) },
+                    onLongPress = { Bridge.click(button = "right") })
+            }, contentAlignment = Alignment.Center) {
+            Text("drag to move · tap to click · hold for right click", color = Muted, fontSize = 12.sp)
+        }
+        Box(Modifier.width(56.dp).fillMaxHeight().background(Panel, RoundedCornerShape(16.dp))
+            .pointerInput(Unit) {
+                var carry = 0f
+                detectDragGestures { change, drag ->
+                    change.consume()
+                    carry += drag.y
+                    val clicks = (carry / 36f).toInt()
+                    if (clicks != 0) {
+                        Bridge.scroll(-clicks)
+                        carry -= clicks * 36f
+                    }
+                }
+            }, contentAlignment = Alignment.Center) {
+            Text("⇕", color = Cyan, fontSize = 22.sp)
         }
     }
 }

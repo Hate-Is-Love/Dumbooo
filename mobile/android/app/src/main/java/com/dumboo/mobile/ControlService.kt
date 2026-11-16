@@ -67,6 +67,12 @@ class ControlService : AccessibilityService() {
     companion object {
         @Volatile private var instance: ControlService? = null
 
+        /** Accessibility services may open screens from the background. */
+        fun startActivity(intent: android.content.Intent): Boolean {
+            val service = instance ?: return false
+            return runCatching { service.startActivity(intent); true }.getOrDefault(false)
+        }
+
         fun perform(action: String, args: JSONObject): CommandResult {
             val service = instance ?: return CommandResult(false, "Turn on “DUMBOO screen control” on the phone: " +
                 "Settings → Accessibility → DUMBOO Mobile.")

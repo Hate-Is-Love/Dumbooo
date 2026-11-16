@@ -754,3 +754,21 @@ Tailscale). These need the owner's phone.
   files was kept). App 1.1.0 builds from plain PowerShell.
 
 **Not verified yet:** these phone commands on a real phone.
+
+# App 1.2: voice, the mini bot, agenda, files, touchpad, anywhere (2026-11-17)
+
+* `tests/test_phone_link.py` (+6):
+  * the laptop voice streams sentence audio to the phone and ends with `last`;
+  * the phone agenda adds, completes and deletes tasks and events, and reports errors;
+  * the Files screen lists only the DUMBOO Mobile folder, refuses `../secret.txt` and fetches a file even with
+    "files" off (the phone asked);
+  * choices are read out with `listen_after`, "the second one" picks the right contact, and "never mind" cancels;
+  * a song is looked up and sent with its video id;
+  * `ready` carries the addresses and the Tailscale flag;
+  * files and clipboard the owner sends need no switch, while anything else is still refused.
+* **The 3D bot** was rendered in the browser at phone size: drag-to-spin and the speaking animation work, with no
+  console errors.
+* **Android 1.2.0** builds, and lint shows no new warnings.
+
+**Not verified yet:** on a real phone (speech recognition, the laptop voice playback, opening apps from the
+background, YouTube autoplay, touchpad feel, Tailscale).

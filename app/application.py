@@ -86,10 +86,14 @@ class AssistantCore:
                  desktop=None, browser=None, uia=None, screen_capture=None, research_providers=None,
                  research_client=None, research_resolver=None, research_browser=None, weather_client=None, face_engine=None,
                  camera_factory=None, guardian_overrides: dict | None = None,
-                 bridge_overrides: dict | None = None) -> None:
+                 bridge_overrides: dict | None = None, music_lookup=None) -> None:
         self.paths = paths.ensure()
+        if music_lookup is None:
+            from bridge.music import youtube_video_id as music_lookup
+        self._music_lookup = music_lookup     # "play <song> on my phone" plays it directly (tests: no internet)
         self.ai_provider_factory = ai_provider_factory   # also used by each phone's own conversation
         self._bridge_overrides = bridge_overrides or {}  # tests inject a temporary identity / addresses
+        self._synth_factory = synth_factory   # also used for DUMBOO's voice on the phone
         self.camera_factory = camera_factory  # tests inject a fake camera; None = the real webcam
         self._guardian_overrides = guardian_overrides or {}  # tests inject fake OS layers (no real system changes)
         self.environ = os.environ if environ is None else environ
@@ -372,7 +376,8 @@ class AssistantCore:
 
         # "… on my phone": call, music, find my phone, notifications, clipboard, files (DUMBOO Mobile).
         self.phone_assistant = PhoneAssistant(self.agenda_assistant, self.auth, lambda: getattr(self, "bridge", None),
-                                              open_panel=lambda tab: self.bus.publish(Events.PHONE_PANEL, {"tab": tab}))
+                                              open_panel=lambda tab: self.bus.publish(Events.PHONE_PANEL, {"tab": tab}),
+                                              lookup=self._music_lookup)
         self.guardian_assistant = GuardianAssistant(self.phone_assistant, self.auth, self.guardian, self.profile,
                                                     generate=self._ai_generate)
         self.guardian_assistant.memory = self.memory
@@ -392,6 +397,12 @@ class AssistantCore:
         self.bridge = PhoneBridge(self, lambda: self.settings.section("bridge"), identity, self.devices,
                                   **overrides.get("bridge", {}))
         self.bridge.remote_factory = overrides.get("remote")   # tests: a fake screen and input layer
+        from bridge.voice_out import PhoneVoice
+        from audio.text_to_speech import PiperSynthesizer
+
+        self.phone_voice = PhoneVoice(self._synth_factory or PiperSynthesizer,
+                                      lambda: self.paths.resolve(self.settings.get("tts", "voice_model")),
+                                      lambda: float(self.settings.get("tts", "speed")))
         # Until laptop control is switched on for a phone (Phase 2), phone messages can't run laptop actions.
         self.automation_assistant.remote_allowed = self._phone_may_control
         self.guardian_assistant.remote_allowed = self._phone_may_control

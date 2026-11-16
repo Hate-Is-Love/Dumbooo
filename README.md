@@ -1849,7 +1849,7 @@ the accepted risks are in [docs/PHONE_SECURITY_REVIEW.md](docs/PHONE_SECURITY_RE
 
 ### 22.11 Install the finished app
 
-1. Copy `DUMBOO-Mobile-1.1.0.apk` (or newer) to the phone (USB, Google Drive or email to yourself), then open it.
+1. Copy `DUMBOO-Mobile-1.2.0.apk` (or newer) to the phone (USB, Google Drive or email to yourself), then open it.
 2. Android asks to allow installing from that app (Files, Drive or Chrome). Allow it, then tap **Install**. If
    Play Protect warns about an unknown app, choose **Install anyway**: the APK is built from this repository and
    isn't on the Play Store.
@@ -1881,4 +1881,45 @@ Hold the mic button in DUMBOO Mobile (or type) and say what you want the **phone
 * *What the laptop may do* limits the laptop, not you. Your own requests on the phone don't need those switches.
   The phone accepts them only within 90 seconds of you speaking or typing in the app. Android's own permissions
   still apply.
+
+
+### 22.13 App 1.2: the mini bot, DUMBOO's voice, agenda, files
+
+* **Talking:** tap the mic (or the bot's chest light) and speak. It stops by itself when you stop talking.
+  * Android's own speech recognition handles names and song titles in Indian English. You can switch to Hindi or
+    US English in Settings.
+  * Your words appear live while you speak.
+  * After a question such as "which one?" or "shall I?", DUMBOO listens again by itself.
+* **Voice:** answers are spoken with **the same Piper voice as the laptop**. The laptop makes the audio and the
+  phone plays it. If that isn't available, the phone's own voice takes over. Settings → *DUMBOO's own voice*.
+* **The mini bot** (3D, bundled in the app, works offline):
+  * Drag to spin it. Tap its head (happy), its antenna (wiggle) or its chest (start listening).
+  * Its eyes follow your finger.
+  * It listens, thinks and talks along with DUMBOO.
+* **Opening things straight away:**
+  * While DUMBOO is on screen, apps, calls and songs open at once.
+  * From the background (or when you ask from the laptop), allow **Display over other apps**. The app shows an
+    *ALLOW* bar until you do. Otherwise Android only lets it offer a notification to tap.
+* **Songs play directly:** "play Arijit Singh tum hi ho" makes the laptop find the song on YouTube, and the phone
+  opens it in YouTube Music (or YouTube), already playing.
+* **Choices by voice:** when there's more than one match (two contacts called Rahul, two apps called Notes),
+  DUMBOO reads them out: "One: Rahul Sharma, mobile… Two: Rahul Office…". Say "the second one", "Rahul Office" or
+  "cancel".
+* **Agenda:**
+  * Animated *Schedule* and *Tasks* tabs: a day timeline with the next event glowing and a countdown, and a
+    progress ring.
+  * Tick tasks off, swipe left to delete, and use **+** to add a task (priority, date and time) or an event (with a
+    reminder).
+* **Files:**
+  * Send a file, photo, video or the clipboard to the laptop.
+  * Download anything in the laptop's `Downloads\DUMBOO Mobile` folder.
+  * Open files the laptop sent you.
+* **Touchpad:** bigger (and **⛶ FULL SCREEN**), with pointer acceleration. Moves are sent about 120 times a second
+  without network buffering. On the laptop, the account check and the monitor size are cached instead of being
+  re-read for every movement, which removes the lag.
+* **Anywhere:**
+  * The laptop now tells the phone all its addresses, so once Tailscale runs on both, the phone finds the laptop
+    on mobile data by itself. You no longer type the `100.x` address.
+  * Settings → *Use DUMBOO anywhere* and ACCOUNT → Phone on the laptop show whether it's ready, with a link to
+    install Tailscale.
 

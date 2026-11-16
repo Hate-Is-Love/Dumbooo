@@ -146,6 +146,10 @@ class PhoneBridge:
 
     # -- one phone connection -------------------------------------------------------------------------------------------
     def _handle(self, connection) -> None:
+        try:   # small messages (touchpad moves) go out at once instead of waiting to be bundled
+            connection.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        except (OSError, AttributeError):
+            pass
         send_lock = threading.Lock()
 
         def send(msg: dict) -> None:
@@ -184,7 +188,8 @@ class PhoneBridge:
             self._links.setdefault(device.id, []).append((link, connection))
         self.registry.audit("connected", device.id, device.user_id, connection.remote_address[0]
                             if connection.remote_address else "")
-        send({"t": "ready", "device": device.id, "user": session.display_name, "caps": device.capabilities})
+        send({"t": "ready", "device": device.id, "user": session.display_name, "caps": device.capabilities,
+              "addresses": self._addresses(), "tailscale": any(a.startswith("100.") for a in self._addresses())})
         recent: deque[float] = deque()       # chat, voice, agenda: 20 per 10 s
         fast: deque[float] = deque()         # touchpad, keys, screen acks: 400 per 10 s
         try:

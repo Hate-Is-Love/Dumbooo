@@ -12,6 +12,10 @@ import java.util.concurrent.ConcurrentHashMap
 /** Whether the app's screen is showing (set by MainActivity). */
 object App {
     @Volatile var inForeground = false
+    /** The visible DUMBOO screen, so commands can open apps straight away while it's on screen. */
+    @Volatile var activity: java.lang.ref.WeakReference<android.app.Activity>? = null
+    /** An app had to be offered as a notification: ask for "display over other apps" next time. */
+    @Volatile var needsOverlay = false
 }
 
 /**

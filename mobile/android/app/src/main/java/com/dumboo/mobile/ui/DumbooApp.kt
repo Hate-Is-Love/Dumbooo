@@ -1,5 +1,7 @@
 package com.dumboo.mobile.ui
 
+import android.net.Uri
+import android.content.Intent
 import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -74,7 +76,6 @@ import com.dumboo.mobile.ChatItem
 import com.dumboo.mobile.ConnectionService
 import com.dumboo.mobile.LinkState
 import com.dumboo.mobile.PairingOffer
-import com.dumboo.mobile.PushToTalk
 import com.dumboo.mobile.Store
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
@@ -183,6 +184,8 @@ private fun MainScreens(state: LinkState) {
                 icon = { Icon(Icons.Filled.Home, null) }, label = { Text("DUMBOO") })
             NavigationBarItem(selected = tab == 1, onClick = { tab = 1; Bridge.requestAgenda() },
                 icon = { Icon(Icons.Filled.DateRange, null) }, label = { Text("Agenda") })
+            NavigationBarItem(selected = tab == 4, onClick = { tab = 4 },
+                icon = { Text("📁", fontSize = 20.sp) }, label = { Text("Files") })
             NavigationBarItem(selected = tab == 3, onClick = { tab = 3 },
                 icon = { Text("💻", fontSize = 20.sp) }, label = { Text("Laptop") })
             NavigationBarItem(selected = tab == 2, onClick = { tab = 2 },
@@ -195,6 +198,7 @@ private fun MainScreens(state: LinkState) {
                 0 -> ChatScreen()
                 1 -> AgendaScreen()
                 3 -> LaptopScreen()
+                4 -> FilesScreen()
                 else -> SettingsScreen(state)
             }
         }
@@ -218,127 +222,6 @@ private fun StatusBar(state: LinkState) {
     }
 }
 
-private fun plain(markdown: String): String = markdown
-    .replace(Regex("\\[\\[(\\d+)]]\\([^)]*\\)"), "[$1]")
-    .replace(Regex("\\[([^\\]]+)]\\(([^)]+)\\)"), "$1 ($2)")
-    .replace("**", "").replace(Regex("(?<![\\w])_([^_]+)_(?![\\w])"), "$1").replace("`", "")
-    .replace(Regex("^#+\\s*", RegexOption.MULTILINE), "").replace(Regex("^- ", RegexOption.MULTILINE), "• ")
-
-@Composable
-private fun ChatScreen() {
-    val context = LocalContext.current
-    val chat by Bridge.chat.collectAsStateWithLifecycle()
-    var input by remember { mutableStateOf("") }
-    var recording by remember { mutableStateOf(false) }
-    val ptt = remember { PushToTalk() }
-    val listState = rememberLazyListState()
-    val askMic = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
-    LaunchedEffect(chat.size) { if (chat.isNotEmpty()) listState.animateScrollToItem(chat.size - 1) }
-
-    Column(Modifier.fillMaxSize().imePadding()) {
-        LazyColumn(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp), state = listState,
-            verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            item { Spacer(Modifier.height(8.dp)) }
-            if (chat.isEmpty()) item {
-                Text("Ask DUMBOO anything, or hold the mic and speak.\nTry “what's on my plate today?” or " +
-                    "“remind me in 10 minutes to stretch”.", color = Muted, modifier = Modifier.padding(16.dp))
-            }
-            items(chat, key = { it.id }) { Bubble(it) }
-            item { Spacer(Modifier.height(8.dp)) }
-        }
-        Row(Modifier.fillMaxWidth().background(Panel).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(value = input, onValueChange = { input = it }, modifier = Modifier.weight(1f),
-                placeholder = { Text(if (recording) "Listening… release to send" else "Message DUMBOO") },
-                maxLines = 4, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(onSend = { Bridge.sendChat(input); input = "" }))
-            if (input.isNotBlank()) {
-                IconButton(onClick = { Bridge.sendChat(input); input = "" }) { Icon(Icons.AutoMirrored.Filled.Send, "Send", tint = Cyan) }
-            } else {
-                Box(Modifier.padding(start = 8.dp).size(52.dp).clip(CircleShape)
-                    .background(if (recording) Danger else Cyan)
-                    .pointerInput(Unit) {
-                        detectTapGestures(onPress = {
-                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) !=
-                                PackageManager.PERMISSION_GRANTED) {
-                                askMic.launch(Manifest.permission.RECORD_AUDIO)
-                                return@detectTapGestures
-                            }
-                            recording = ptt.start()
-                            tryAwaitRelease()
-                            recording = false
-                            ptt.stop()?.let { Bridge.sendVoice(it) }
-                        })
-                    }, contentAlignment = Alignment.Center) {
-                    Text("🎙", fontSize = 22.sp)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun Bubble(item: ChatItem) {
-    val shape = RoundedCornerShape(14.dp)
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = if (item.fromMe) Arrangement.End else Arrangement.Start) {
-        Card(shape = shape, modifier = Modifier.widthIn(max = 320.dp), colors = CardDefaults.cardColors(
-            containerColor = when {
-                item.error -> Color(0xFF3A1A20)
-                item.fromMe -> Color(0xFF123A40)
-                else -> Panel
-            })) {
-            Column(Modifier.padding(12.dp)) {
-                if (!item.fromMe) Text("DUMBOO", color = Cyan, fontSize = 10.sp, letterSpacing = 2.sp)
-                Text((item.heard?.let { "$it " } ?: "") + plain(item.text) + if (item.pending) " ▍" else "",
-                    color = if (item.error) Danger else MaterialTheme.colorScheme.onSurface)
-            }
-        }
-    }
-}
-
-@Composable
-private fun AgendaScreen() {
-    val agenda by Bridge.agenda.collectAsStateWithLifecycle()
-    LazyColumn(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Title("AGENDA")
-                Spacer(Modifier.weight(1f))
-                IconButton(onClick = { Bridge.requestAgenda() }) { Icon(Icons.Filled.Refresh, "Refresh", tint = Cyan) }
-            }
-        }
-        val a: Agenda? = agenda
-        if (a == null) {
-            item { Text("Loading from the laptop…", color = Muted) }
-            return@LazyColumn
-        }
-        item { Text("Coming up", fontWeight = FontWeight.SemiBold) }
-        if (a.events.isEmpty()) item { Text("Nothing scheduled in the next 7 days.", color = Muted) }
-        items(a.events) { e ->
-            Card(colors = CardDefaults.cardColors(containerColor = Panel)) {
-                Row(Modifier.fillMaxWidth().padding(12.dp)) {
-                    Text(e.startsAt.replace("T", "  "), color = Cyan, fontFamily = FontFamily.Monospace,
-                        fontSize = 13.sp)
-                    Spacer(Modifier.size(12.dp))
-                    Text((if (e.reminder) "⏰ " else "📅 ") + e.title)
-                }
-            }
-        }
-        item { Spacer(Modifier.height(8.dp)); Text("Tasks", fontWeight = FontWeight.SemiBold) }
-        if (a.tasks.isEmpty()) item { Text("No pending tasks.", color = Muted) }
-        items(a.tasks) { t ->
-            Card(colors = CardDefaults.cardColors(containerColor = Panel)) {
-                Column(Modifier.fillMaxWidth().padding(12.dp)) {
-                    Text((if (t.priority == "high") "❗ " else "") + t.title)
-                    val due = t.due?.let { d -> if (t.hasTime) d.replace("T", " ") else d.substringBefore("T") }
-                    val details = listOfNotNull(due?.let { "due $it" }, t.remindAt?.let { "reminder ${it.replace("T", " ")}" })
-                    if (details.isNotEmpty()) Text(details.joinToString(" · "),
-                        color = if (t.overdue) Danger else Muted, fontSize = 13.sp)
-                }
-            }
-        }
-    }
-}
-
 @Composable
 private fun SettingsScreen(state: LinkState) {
     val context = LocalContext.current
@@ -346,6 +229,8 @@ private fun SettingsScreen(state: LinkState) {
     var hosts by remember { mutableStateOf(laptop?.hosts?.joinToString(", ") ?: "") }
     var speak by remember { mutableStateOf(Store.speakAnswers(context)) }
     var lock by remember { mutableStateOf(Store.appLock(context)) }
+    var laptopVoice by remember { mutableStateOf(Store.laptopVoice(context)) }
+    var language by remember { mutableStateOf(Store.voiceLanguage(context)) }
     var confirmUnpair by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -366,6 +251,21 @@ private fun SettingsScreen(state: LinkState) {
             Text("Speak DUMBOO's answers", modifier = Modifier.weight(1f))
             Switch(checked = speak, onCheckedChange = { speak = it; Store.setSpeakAnswers(context, it) })
         }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("DUMBOO's own voice (from the laptop)")
+                Text("The same voice as on the laptop. Off: the phone's voice.", color = Muted, fontSize = 12.sp)
+            }
+            Switch(checked = laptopVoice, onCheckedChange = { laptopVoice = it; Store.setLaptopVoice(context, it) })
+        }
+        Text("Listening language", color = Muted, fontSize = 12.sp)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("en-IN" to "English (India)", "hi-IN" to "Hindi", "en-US" to "English (US)").forEach { (tag, label) ->
+                androidx.compose.material3.FilterChip(selected = language == tag,
+                    onClick = { language = tag; Store.setVoiceLanguage(context, tag) }, label = { Text(label, fontSize = 12.sp) })
+            }
+        }
+        AnywhereCard()
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Lock the app with fingerprint / face", modifier = Modifier.weight(1f))
             Switch(checked = lock, onCheckedChange = { lock = it; Store.setAppLock(context, it) })
@@ -388,5 +288,41 @@ private fun SettingsScreen(state: LinkState) {
             }
         }
         Text(if (state is LinkState.Ready) "Connected via ${state.host}" else "", color = Muted, fontSize = 12.sp)
+    }
+}
+
+/** Use DUMBOO from anywhere: both devices on Tailscale (free, private, no router changes). */
+@Composable
+private fun AnywhereCard() {
+    val context = LocalContext.current
+    val laptopReady by Bridge.laptopTailscale.collectAsStateWithLifecycle()
+    val phoneHas = remember {
+        runCatching { context.packageManager.getPackageInfo("com.tailscale.ipn", 0); true }.getOrDefault(false)
+    }
+    Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF221B42))) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Title("USE DUMBOO ANYWHERE")
+            Text(when {
+                laptopReady && phoneHas -> "✓ Ready. The laptop and this phone are on Tailscale: DUMBOO connects on " +
+                    "mobile data too. Keep Tailscale switched on on both."
+                laptopReady -> "The laptop is on Tailscale. Install Tailscale on this phone and sign in with the same " +
+                    "account. That's it."
+                else -> "Away from home Wi-Fi, DUMBOO connects through Tailscale (free, private, end-to-end " +
+                    "encrypted; your router is never opened). Install it on the laptop (tailscale.com/download) and " +
+                    "on this phone, and sign in to both with the same account."
+            }, fontSize = 13.sp)
+            if (!phoneHas) OutlinedButton(onClick = {
+                runCatching {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=com.tailscale.ipn"))
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                }.onFailure {
+                    context.startActivity(Intent(Intent.ACTION_VIEW,
+                        Uri.parse("https://play.google.com/store/apps/details?id=com.tailscale.ipn"))
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                }
+            }) { Text("GET TAILSCALE FOR THIS PHONE") }
+            else if (!laptopReady) Text("Tailscale is on this phone. Now install it on the laptop.", color = Muted,
+                fontSize = 12.sp)
+        }
     }
 }

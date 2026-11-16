@@ -194,3 +194,20 @@ private networks, allow DUMBOO on the Tailscale network too: Windows treats it a
 
 **Security review:** threat model, controls, findings and accepted risks are in
 [PHONE_SECURITY_REVIEW.md](PHONE_SECURITY_REVIEW.md).
+
+## App 1.2 additions
+
+| Direction | Message | Meaning |
+|---|---|---|
+| phone → laptop | `{"t":"speak","id":7,"text":"..."}` | Speak this answer with the laptop's Piper voice |
+| laptop → phone | `{"t":"speech.audio","id":7,"seq":0,"rate":22050,"pcm":"<base64 16-bit mono>","last":false}` | One sentence of audio; `last:true` ends it. `speech.unavailable` means "use the phone's voice" |
+| phone → laptop | `{"t":"agenda.do","action":"add_task\|complete_task\|delete_task\|add_event\|delete_event",...}` | Change the agenda; answered with a fresh `agenda`, or `agenda.error` |
+| phone → laptop | `{"t":"files.list"}` / `{"t":"files.get","name":"report.pdf"}` | The laptop's `Downloads\DUMBOO Mobile` folder (names only; nothing outside it). The file comes as `file.begin {requested:true}` … |
+| both | `"own": true` on `clip.push` / `file.begin` from the phone | The owner sent it themselves, so the phone's *what the laptop may do* switches don't apply |
+| laptop → phone | `ready` now carries `addresses` and `tailscale` | The phone saves new addresses (for example Tailscale) to reach the laptop from anywhere |
+| laptop → phone | `phone.cmd play {query, video}` | `video` is a YouTube id found by the laptop (`bridge/music.py`), which the phone opens so it plays at once |
+| phone → laptop | `phone.result {ok:false, data:{choices:[{id,label}]}}` | Several matches. `PhoneAssistant` reads them out (`listen_after`), and the next message picks one (`pick`) |
+
+Touchpad input: TCP_NODELAY on both ends, moves added up on the phone and sent every 8 ms, and the account
+check for `input.move`/`input.scroll` cached for 1 s. Switching laptop control off still applies at once, because
+the capability check is in memory.

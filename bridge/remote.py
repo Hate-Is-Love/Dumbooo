@@ -7,6 +7,8 @@ this module. Screen frames are captured only while the phone is showing the scre
 
 from __future__ import annotations
 
+import time
+
 import logging
 import threading
 from typing import Callable
@@ -69,9 +71,17 @@ class RemoteControl:
     def __init__(self, desktop, monitor: Callable[[], tuple[int, int, int, int]] = primary_monitor,
                  frame: Callable[[int, int], tuple[bytes, int, int]] = grab_frame) -> None:
         self._desktop = desktop
-        self._monitor = monitor
+        self._monitor_source = monitor
+        self._monitor_cache: tuple[float, tuple[int, int, int, int]] | None = None
         self._frame = frame
         self._lock = threading.Lock()
+
+    def _monitor(self) -> tuple[int, int, int, int]:
+        """The primary monitor's position and size, re-read at most every 2 s (touchpad moves arrive ~100/s)."""
+        now = time.monotonic()
+        if self._monitor_cache is None or now - self._monitor_cache[0] > 2.0:
+            self._monitor_cache = (now, self._monitor_source())
+        return self._monitor_cache[1]
 
     def frame(self, max_width: int = 1024, quality: int = 60) -> tuple[bytes, int, int]:
         return self._frame(max(320, min(MAX_FRAME_WIDTH, int(max_width))), max(30, min(85, int(quality))))

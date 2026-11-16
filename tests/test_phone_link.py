@@ -41,7 +41,8 @@ class ActivePhone:
             if msg["t"] == "phone.cmd":
                 self.cmds.append(msg)
                 if msg["id"]:
-                    ok, text, data = self.answers.get(msg["action"], (True, f"did {msg['action']}", {}))
+                    ok, text, data = (self.answers(msg) if callable(self.answers) else
+                                      self.answers.get(msg["action"], (True, f"did {msg['action']}", {})))
                     self.phone.send({"t": "phone.result", "id": msg["id"], "ok": ok, "message": text, "data": data})
             elif msg["t"] == "file.begin":
                 self.files[msg["id"]] = bytearray()
@@ -267,5 +268,119 @@ def test_new_phone_actions_from_the_laptop_need_the_phone_switch(rig):  # noqa: 
         rig.reply("set a timer on my phone for 10 minutes")
         assert active.cmds[-1]["action"] == "timer" and active.cmds[-1]["args"] == {"seconds": 600}
         assert "own" not in active.cmds[-1]["args"]
+    finally:
+        active.stop()
+
+
+def test_dumboo_speaks_on_the_phone_with_the_laptop_voice(rig):  # noqa: F811
+    active, _ready = active_phone(rig)
+    try:
+        active.phone.send({"t": "speak", "id": 9, "text": "Hello there. How are you?"})
+        first = active.until("speech.audio")
+        assert first["id"] == 9 and first["rate"] > 0 and base64.b64decode(first["pcm"])
+        end = first
+        while not end["last"]:
+            end = active.until("speech.audio")
+        assert end["seq"] >= 1
+    finally:
+        active.stop()
+
+
+def test_the_phone_agenda_can_add_complete_and_delete(rig):  # noqa: F811
+    active, _ready = active_phone(rig)
+    try:
+        active.phone.send({"t": "agenda.do", "action": "add_task", "title": "Buy flowers", "priority": "high",
+                           "due": "2030-01-02T09:30"})
+        agenda = active.until("agenda")
+        task = next(t for t in agenda["tasks"] if t["title"] == "Buy flowers")
+        assert task["priority"] == "high" and task["has_time"]
+        active.phone.send({"t": "agenda.do", "action": "complete_task", "id": task["id"]})
+        assert all(t["id"] != task["id"] for t in active.until("agenda")["tasks"])
+        from datetime import datetime, timedelta
+
+        soon = (datetime.now() + timedelta(days=2)).replace(hour=15, minute=0).isoformat(timespec="minutes")
+        active.phone.send({"t": "agenda.do", "action": "add_event", "title": "Dentist",
+                           "starts_at": soon, "reminder_minutes": 30})
+        event = next(e for e in active.until("agenda")["events"] if e["title"] == "Dentist")
+        active.phone.send({"t": "agenda.do", "action": "delete_event", "id": event["id"]})
+        assert all(e["id"] != event["id"] for e in active.until("agenda")["events"])
+        active.phone.send({"t": "agenda.do", "action": "add_task", "title": ""})
+        assert active.until("agenda.error")["message"]
+    finally:
+        active.stop()
+
+
+def test_the_phone_files_screen_lists_and_fetches_only_that_folder(rig, tmp_path):  # noqa: F811
+    folder = tmp_path / "in"
+    folder.mkdir()
+    (folder / "report.pdf").write_bytes(b"%PDF-1.4 x")
+    (tmp_path / "secret.txt").write_text("no")
+    active, _ready = active_phone(rig, features={**ALL_FEATURES, "files": False}, tmp=folder)
+    try:
+        active.phone.send({"t": "files.list"})
+        assert [f["name"] for f in active.until("files.list")["files"]] == ["report.pdf"]
+        active.phone.send({"t": "files.get", "name": "../secret.txt"})
+        assert active.until("files.error")["message"]
+        active.phone.send({"t": "files.get", "name": "report.pdf"})     # works although "files" is off: it asked
+        assert wait_for(lambda: any(bytes(v) == b"%PDF-1.4 x" for v in active.files.values()), 5)
+    finally:
+        active.stop()
+
+
+def test_choices_are_read_out_and_picked_by_voice(rig):  # noqa: F811
+    choices = [{"id": "Rahul Sharma|+911", "label": "Rahul Sharma"}, {"id": "Rahul Office|+912", "label": "Rahul Office"}]
+    active, _ready = active_phone(rig)
+
+    def answers(cmd):
+        if cmd["args"].get("pick"):
+            return True, f"Calling {cmd['args']['pick'].split('|')[0]}…", {}
+        return False, "I found 2 contacts called Rahul.", {"choices": choices}
+
+    active.answers = answers
+    try:
+        ready = rig.say("call rahul on my phone")
+        assert "1. Rahul Sharma" in ready["text"] and ready.get("listen_after")
+        assert "Rahul Office" in rig.reply("the second one")
+        assert active.cmds[-1]["args"]["pick"] == "Rahul Office|+912"
+        rig.say("call rahul on my phone")
+        assert "cancelled" in rig.reply("never mind")
+    finally:
+        active.stop()
+
+
+def test_songs_are_looked_up_so_the_phone_plays_them_directly(paths):
+    from tests.test_history_memory import Rig
+
+    r = Rig(paths, music_lookup=lambda q: "dQw4w9WgXcQ" if "arijit" in q else None,
+            bridge_overrides={"identity": {"protect": lambda b: b, "unprotect": lambda b: b},
+                              "bridge": {"addresses": lambda: ["127.0.0.1", "100.101.102.103"], "host": "127.0.0.1"}})
+    from tests.test_bridge import free_port
+
+    r.core.settings.update({"bridge": {"port": free_port()}})
+    try:
+        active, ready = active_phone(r)
+        assert ready["addresses"] == ["127.0.0.1", "100.101.102.103"] and ready["tailscale"] is True
+        r.reply("play arijit singh on my phone")
+        assert active.cmds[-1]["args"] == {"query": "arijit singh", "video": "dQw4w9WgXcQ"}
+        active.stop()
+    finally:
+        r.core.bridge.stop()
+        r.close()
+
+
+
+def test_what_the_owner_sends_from_the_phone_needs_no_laptop_switch(rig, tmp_path):  # noqa: F811
+    off = {k: False for k in ALL_FEATURES}
+    active, _ready = active_phone(rig, features=off, tmp=tmp_path / "in")
+    try:
+        active.phone.send({"t": "clip.push", "text": "not allowed"})
+        active.phone.send({"t": "clip.push", "text": "sent by me", "own": True})
+        assert wait_for(lambda: rig.core.desktop.get_clipboard() == "sent by me", 5)
+        active.phone.send({"t": "file.begin", "id": "o1", "name": "photo.jpg", "size": 3, "own": True})
+        active.phone.send({"t": "file.chunk", "id": "o1", "data": base64.b64encode(b"abc").decode()})
+        active.phone.send({"t": "file.end", "id": "o1"})
+        assert active.until("file.saved")["name"] == "photo.jpg"
+        active.phone.send({"t": "file.begin", "id": "o2", "name": "x.bin", "size": 3})
+        assert active.until("error")["code"] == "not_allowed"
     finally:
         active.stop()

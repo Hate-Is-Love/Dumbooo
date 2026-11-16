@@ -26,7 +26,10 @@ import okhttp3.WebSocketListener
 import org.json.JSONObject
 import kotlinx.coroutines.asCoroutineDispatcher
 import java.util.concurrent.Executors
+import java.net.InetAddress
+import java.net.Socket
 import java.util.concurrent.TimeUnit
+import javax.net.SocketFactory
 import java.util.concurrent.atomic.AtomicLong
 
 sealed class LinkState {
@@ -40,16 +43,17 @@ sealed class LinkState {
 data class ChatItem(val id: Long, val fromMe: Boolean, val text: String, val pending: Boolean = false,
                     val error: Boolean = false, val heard: String? = null)
 
-data class AgendaTask(val title: String, val due: String?, val hasTime: Boolean, val overdue: Boolean,
+data class AgendaTask(val id: Long, val title: String, val due: String?, val hasTime: Boolean, val overdue: Boolean,
                       val priority: String, val remindAt: String?)
 
-data class AgendaEvent(val title: String, val startsAt: String, val reminder: Boolean)
+data class AgendaEvent(val id: Long, val title: String, val startsAt: String, val reminder: Boolean)
+
+/** A file in the laptop's Downloads\DUMBOO Mobile folder. */
+data class LaptopFile(val name: String, val size: Long, val modified: Long)
 
 data class Agenda(val tasks: List<AgendaTask>, val events: List<AgendaEvent>, val loadedAt: Long)
 
 data class Reminder(val title: String, val text: String, val missed: Boolean)
-
-data class Spoken(val text: String)
 
 /** One picture of the laptop screen, with the laptop's real resolution (for mapping taps to clicks). */
 data class ScreenFrame(val bitmap: Bitmap, val width: Int, val height: Int)
@@ -78,9 +82,16 @@ object Bridge {
     val agenda: StateFlow<Agenda?> = _agenda.asStateFlow()
     private val _reminders = MutableSharedFlow<Reminder>(extraBufferCapacity = 16)
     val reminders: SharedFlow<Reminder> = _reminders.asSharedFlow()
-    private val _speak = MutableSharedFlow<Spoken>(extraBufferCapacity = 8)
-    val speak: SharedFlow<Spoken> = _speak.asSharedFlow()
     private val voiceIds = mutableSetOf<Long>()
+    private val _agendaError = MutableSharedFlow<String>(extraBufferCapacity = 4)
+    val agendaError: SharedFlow<String> = _agendaError.asSharedFlow()
+    private val _laptopFiles = MutableStateFlow<List<LaptopFile>?>(null)
+    val laptopFiles: StateFlow<List<LaptopFile>?> = _laptopFiles.asStateFlow()
+    private val _filesMessage = MutableSharedFlow<String>(extraBufferCapacity = 4)
+    val filesMessage: SharedFlow<String> = _filesMessage.asSharedFlow()
+    private val _laptopTailscale = MutableStateFlow(false)
+    /** The laptop has a Tailscale address, so this phone can reach it from anywhere once it's on Tailscale too. */
+    val laptopTailscale: StateFlow<Boolean> = _laptopTailscale.asStateFlow()
     private val _laptopControl = MutableStateFlow(false)
     /** True when the laptop allows this phone to control it (switched on there, with the password). */
     val laptopControl: StateFlow<Boolean> = _laptopControl.asStateFlow()
@@ -128,6 +139,7 @@ object Bridge {
     private fun client(fingerprint: String): OkHttpClient {
         val trust = PinnedTrustManager(fingerprint)
         return OkHttpClient.Builder()
+            .socketFactory(NoDelaySockets)
             .sslSocketFactory(trust.socketFactory(), trust)
             .hostnameVerifier { _, _ -> true }      // identity is checked by the certificate pin instead
             .connectTimeout(8, TimeUnit.SECONDS)
@@ -245,6 +257,15 @@ object Bridge {
                     }
                 }
                 _state.value = LinkState.Ready(user, host)
+                // Learn every address the laptop has (Wi-Fi, Tailscale...), so it's found from anywhere later.
+                msg.optJSONArray("addresses")?.let { arr ->
+                    val context = appContext!!
+                    val known = Store.laptop(context)?.hosts ?: emptyList()
+                    val fresh = List(arr.length()) { arr.optString(it) }.filter { it.isNotBlank() && it !in known }
+                    if (fresh.isNotEmpty()) Store.setHosts(context, (listOf(host) + known.filter { it != host } + fresh)
+                        .distinct().take(8))
+                }
+                _laptopTailscale.value = msg.optBoolean("tailscale")
                 _laptopControl.value = msg.optJSONObject("caps")?.optBoolean("laptop_control") == true
                 requestAgenda()
                 sendFeatures()
@@ -278,13 +299,28 @@ object Bridge {
                 val id = msg.optLong("id")
                 upsertAnswer(id, msg.optString("text"), pending = false)
                 val speech = msg.optString("speech")
-                if (speech.isNotBlank() && (id in voiceIds || appContext?.let { Store.speakAnswers(it) } == true)) {
-                    _speak.tryEmit(Spoken(speech))
+                val spoken = id in voiceIds
+                val context = appContext
+                if (context != null && speech.isNotBlank() && (spoken || Store.speakAnswers(context))) {
+                    Voice.say(context, id, speech, askAfter = spoken && msg.optBoolean("listen_after"))
+                } else if (VoiceUi.mood.value == Mood.THINKING) {
+                    VoiceUi.mood.value = Mood.IDLE
                 }
                 voiceIds.remove(id)
             }
-            "answer.error" -> upsertAnswer(msg.optLong("id"), msg.optString("message", "Failed"), pending = false,
-                error = true)
+            "answer.error" -> {
+                upsertAnswer(msg.optLong("id"), msg.optString("message", "Failed"), pending = false, error = true)
+                if (VoiceUi.mood.value == Mood.THINKING) VoiceUi.mood.value = Mood.IDLE
+            }
+            "speech.audio" -> Voice.onAudio(msg.optLong("id"), msg.optInt("rate"), msg.optString("pcm"),
+                msg.optBoolean("last"))
+            "speech.unavailable" -> Voice.unavailable(msg.optLong("id"))
+            "agenda.error" -> _agendaError.tryEmit(msg.optString("message", "That didn't work."))
+            "files.list" -> _laptopFiles.value = msg.optJSONArray("files")?.let { a ->
+                List(a.length()) { i -> a.getJSONObject(i).let {
+                    LaptopFile(it.optString("name"), it.optLong("size"), it.optLong("modified")) } }
+            } ?: emptyList()
+            "files.error" -> _filesMessage.tryEmit(msg.optString("message"))
             "agenda" -> _agenda.value = parseAgenda(msg)
             "caps" -> {
                 _laptopControl.value = msg.optJSONObject("caps")?.optBoolean("laptop_control") == true
@@ -338,7 +374,7 @@ object Bridge {
         val tasks = msg.getJSONArray("tasks").let { a ->
             List(a.length()) { i ->
                 val t = a.getJSONObject(i)
-                AgendaTask(t.getString("title"), t.optString("due").takeIf { it.isNotBlank() && it != "null" },
+                AgendaTask(t.optLong("id"), t.getString("title"), t.optString("due").takeIf { it.isNotBlank() && it != "null" },
                     t.optBoolean("has_time"), t.optBoolean("overdue"), t.optString("priority", "medium"),
                     t.optString("remind_at").takeIf { it.isNotBlank() && it != "null" })
             }
@@ -346,7 +382,7 @@ object Bridge {
         val events = msg.getJSONArray("events").let { a ->
             List(a.length()) { i ->
                 val e = a.getJSONObject(i)
-                AgendaEvent(e.getString("title"), e.getString("starts_at"), e.optBoolean("reminder"))
+                AgendaEvent(e.optLong("id"), e.getString("title"), e.getString("starts_at"), e.optBoolean("reminder"))
             }
         }
         return Agenda(tasks, events, System.currentTimeMillis())
@@ -355,11 +391,13 @@ object Bridge {
     // -- sending ----------------------------------------------------------------------------------------------------
     private fun ready(): Boolean = _state.value is LinkState.Ready && socket != null
 
-    fun sendChat(text: String) {
+    /** [spoken]: said into the mic (the answer is spoken back, and DUMBOO may listen again after a question). */
+    fun sendChat(text: String, spoken: Boolean = false) {
         val clean = text.trim()
         if (clean.isEmpty()) return
         val id = ids.incrementAndGet()
-        _chat.update { it + ChatItem(id, fromMe = true, text = clean) }
+        _chat.update { it + ChatItem(id, fromMe = true, text = clean, heard = if (spoken) "🎙" else null) }
+        if (spoken) voiceIds += id
         if (!ready()) {
             upsertAnswer(id, "Not connected to the laptop right now.", pending = false, error = true)
             return
@@ -380,6 +418,28 @@ object Bridge {
         lastOwnerMessage = System.currentTimeMillis()
         socket?.send(JSONObject().put("t", "voice").put("id", id).put("rate", 16000)
             .put("pcm", Base64.encodeToString(pcm, Base64.NO_WRAP)).toString())
+    }
+
+    fun requestSpeech(id: Long, text: String) = send(JSONObject().put("t", "speak").put("id", id)
+        .put("text", text.take(1500)))
+
+    // -- agenda from the phone ------------------------------------------------------------------------------------
+    private fun agendaDo(msg: JSONObject) = send(msg.put("t", "agenda.do"))
+    fun addTask(title: String, priority: String, due: String?) = agendaDo(JSONObject().put("action", "add_task")
+        .put("title", title).put("priority", priority).put("due", due ?: JSONObject.NULL))
+    fun completeTask(id: Long, done: Boolean = true) = agendaDo(JSONObject().put("action", "complete_task")
+        .put("id", id).put("done", done))
+    fun deleteTask(id: Long) = agendaDo(JSONObject().put("action", "delete_task").put("id", id))
+    fun addEvent(title: String, startsAt: String, reminderMinutes: Int?) = agendaDo(JSONObject()
+        .put("action", "add_event").put("title", title).put("starts_at", startsAt)
+        .put("reminder_minutes", reminderMinutes ?: JSONObject.NULL))
+    fun deleteEvent(id: Long) = agendaDo(JSONObject().put("action", "delete_event").put("id", id))
+
+    // -- files ----------------------------------------------------------------------------------------------------
+    fun listLaptopFiles() = send(JSONObject().put("t", "files.list"))
+    fun getLaptopFile(name: String) {
+        FileTransfer.expect(name)
+        send(JSONObject().put("t", "files.get").put("name", name))
     }
 
     fun requestAgenda() {
@@ -412,8 +472,25 @@ object Bridge {
         control(msg)
     }
 
-    fun move(dx: Int, dy: Int) {
-        if (dx != 0 || dy != 0) control(JSONObject().put("t", "input.move").put("dx", dx).put("dy", dy))
+    private var moveX = 0f
+    private var moveY = 0f
+    private var moveFlush: Job? = null
+
+    fun move(dx: Float, dy: Float) {
+        synchronized(this) { moveX += dx; moveY += dy }
+        if (moveFlush?.isActive == true) return
+        moveFlush = scope.launch {
+            while (true) {
+                val (x, y) = synchronized(this@Bridge) {
+                    val x = moveX.toInt(); val y = moveY.toInt()
+                    moveX -= x; moveY -= y
+                    x to y
+                }
+                if (x == 0 && y == 0) break
+                control(JSONObject().put("t", "input.move").put("dx", x).put("dy", y))
+                delay(8)
+            }
+        }
     }
 
     fun scroll(clicks: Int) {
@@ -455,15 +532,28 @@ object Bridge {
         .put("seq", seq).put("w", w).put("h", h).put("img", Base64.encodeToString(jpeg, Base64.NO_WRAP)))
 
     /** “Send clipboard to laptop”: the text lands on the laptop's clipboard, ready for Ctrl+V. */
-    fun pushClipboard(text: String): String {
+    fun pushClipboard(text: String, own: Boolean = false): String {
         val context = appContext ?: return "Not connected."
-        if (!Features.usable(context, "clipboard")) return "Turn on “Clipboard” in Settings first."
+        if (!own && !Features.usable(context, "clipboard")) return "Turn on “Clipboard” in Settings first."
         if (!ready()) return "Not connected to the laptop."
         if (text.isBlank()) return "The phone's clipboard is empty."
-        send(JSONObject().put("t", "clip.push").put("text", text.take(20000)))
+        send(JSONObject().put("t", "clip.push").put("text", text.take(20000)).put("own", own))
         return "Sent to the laptop's clipboard. Press Ctrl+V there."
     }
 
     private fun deviceName(): String =
         "${Build.MANUFACTURER.replaceFirstChar { it.uppercase() }} ${Build.MODEL}".take(60)
+}
+
+/** Plain sockets with TCP_NODELAY: touchpad moves leave the phone at once instead of being bundled. */
+private object NoDelaySockets : SocketFactory() {
+    private val base = SocketFactory.getDefault()
+    private fun Socket.tuned() = apply { tcpNoDelay = true }
+    override fun createSocket(): Socket = base.createSocket().tuned()
+    override fun createSocket(host: String?, port: Int): Socket = base.createSocket(host, port).tuned()
+    override fun createSocket(host: String?, port: Int, localHost: InetAddress?, localPort: Int): Socket =
+        base.createSocket(host, port, localHost, localPort).tuned()
+    override fun createSocket(host: InetAddress?, port: Int): Socket = base.createSocket(host, port).tuned()
+    override fun createSocket(address: InetAddress?, port: Int, localAddress: InetAddress?, localPort: Int): Socket =
+        base.createSocket(address, port, localAddress, localPort).tuned()
 }
